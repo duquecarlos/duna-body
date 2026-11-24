@@ -34798,3 +34798,56 @@ further work. `BODY-DETALLE-HISTORIA-TIMER-1`: consider whether the scheduled pu
 of `traer_detalle_historia` on its own timer, instead of only ever being invoked by hand through the CLI or the
 host verb.
 
+## BODY-DETALLE-HISTORIA-1-B
+
+**Cause.** BODY-DETALLE-HISTORIA-1 merged (696d49a) and deployed; its `--dry-run` ran clean on the host, but the
+first LIVE `detalle-historia` run stopped before any Garmin call with `RuntimeError: BODY_TOKEN_KEY is not set`
+(`body/garmin_cuenta.py:52`, reached from `body/detalle_historia.py:136` `garmin_cuenta.leer`). The arm's
+`runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" ...` never loaded
+`/srv/duna/env/body.env`, unlike the scheduled pull, which gets that file through systemd
+(`deploy/host/body-pull.service`'s own `EnvironmentFile=`, `User=`, `Environment=BODY_HOME`,
+`WorkingDirectory=` and hardening lines). The text-level tests could not catch this because they assert the
+wrapper's text, not the environment it runs with.
+
+**Fix.** The `detalle-historia` arm in `deploy/host/body-import-pc.sh` now runs as a transient systemd unit
+carrying the SAME properties as `body-pull.service`, so the two can never drift apart:
+`systemd-run --wait --pipe --collect --quiet --uid="$DATA_USER" --property=EnvironmentFile=/srv/duna/env/body.env
+--setenv="BODY_HOME=$DATA_DIR" --working-directory="$REPO_DIR" --property=NoNewPrivileges=yes
+--property=ProtectSystem=strict --property=ProtectHome=yes --property=ReadWritePaths="$DATA_DIR"
+--property=PrivateTmp=yes --property=UMask=0077 "$REPO_DIR/.venv/bin/python" -m body.detalle_historia
+"${DETALLE_HISTORIA_ARGS[@]}"`. The arm's own argument validation (`--cuenta-sub`, `--dry-run`, `--max`) is
+unchanged. If `systemd-run` is absent the arm refuses with a clear line before any Garmin call -- it never falls
+back to a run without the environment. The env file is never sourced, `cat`'d or printed.
+`cobertura`, `personas`, `importar-pc` and `relinkar-garmin` are unchanged -- only the `detalle-historia` arm
+runs differently.
+
+**Tests.** `tests/test_host_import.py`'s new `DetalleHistoriaSystemdRunTest`: the arm uses `systemd-run` (never
+`runuser`), the `uid`, the `EnvironmentFile`, `BODY_HOME` and the working directory match the pull service's own
+values; a test parses `deploy/host/body-pull.service`'s `[Service]` hardening lines (`NoNewPrivileges`,
+`ProtectSystem`, `ProtectHome`, `ReadWritePaths`, `PrivateTmp`, `UMask`) and asserts each one appears on the arm
+as its own `--property=`, so the two configurations can never silently drift apart; the env file is never
+sourced, `cat`'d or dotted; and `systemd-run`'s absence is refused before the exec, with no fallback. The
+pre-existing `detalle-historia` tests for `--cuenta-sub`, `--dry-run`/`--max` forwarding and "touches no timer,
+no backup" are unchanged and still pass.
+
+**Follow-up, named, not built.** `BODY-HOST-VERBOS-ENTORNO-1`: census which other `duna-deploy-body` arms read a
+secret from `body.env` the same way `detalle-historia` did and would fail the same way live; `cobertura`,
+`personas`, `importar-pc` and `relinkar-garmin` were left unchanged by this slice and not examined for this.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 28 chunks (24 regular chunks of up
+to 10 modules across the 231 ordinary `tests/test_*.py` modules, plus `test_garmin_*` and `test_host_*` in
+chunks of 4-5, plus `test_guardia_parches` alone since it takes roughly 17 minutes by itself scanning every test
+file against every `body/` module). Per-chunk counts summed to **5620**, reconciled against an independent
+`unittest.TestLoader().discover('tests', top_level_dir='.')` collect-only count on the same tree, which also
+returned **5620** -- exact match (BODY-DETALLE-HISTORIA-1's own floor was 5612; this slice's net +8 test methods
+in `test_host_import.py` account for the rise). Every chunk OK; the only non-plain results were the same
+pre-existing one expected failure and a few scenario-named prints already present on `main`, no regression.
+
+**Merge.** Diff: no schema/migration change, no cross-repo contract change, no customer-facing bytes (a host
+deploy script and its own tests). Merge policy A's conditions are met; the spec's own WHAT TO DO step 4 says
+"YOU MAY MERGE". `git checkout main`; `git merge --no-ff feat/body-detalle-historia-1-b` (slice commit
+b3fdfb37fbd25da426cb1dd9f1be7df495653c65 onto `main`, merge commit
+37ecc253f8c4652027824d91cc6ee95ced060280) -- tree identity proven: merge tree
+e2d4bdd23af6bf6223419cba803ad512401b96e7 equals branch tree e2d4bdd23af6bf6223419cba803ad512401b96e7, `git diff`
+between the branch commit and the merge commit empty. Branch deleted; `body-app` on `main`, clean.
+
