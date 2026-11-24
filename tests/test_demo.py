@@ -46,7 +46,7 @@ def _row_checksum(conn: sqlite3.Connection) -> str:
     tables = ["person", "daily_metric", "sleep_session", "activity", "shift", "shift_batch",
               "shift_batch_item", "goal", "habit", "habit_check", "goal_check", "goal_enlace", "ingesta",
               "comida_compartida", "comida_compartida_porcion", "consentimiento_comida_compartida",
-              "racha_piso", "altitud_estancia"]
+              "racha_piso", "altitud_estancia", "producto", "producto_nutricion", "comida_producto"]
     excluded = {"creado_en", "created_at", "creado_at", "decided_at", "extracted_at", "received",
                 "updated_at", "granted_at"}
     for name in tables:
@@ -322,6 +322,32 @@ class SeededContentTest(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row["person_category"], demo._LESION_ZONA_DEMO)
+
+    def test_seeds_invented_products_with_label_nutrition(self):
+        # BODY-COMIDA-PRODUCTO-1.
+        rows = self.conn.execute(
+            "SELECT id, nombre_es, nombre_en, origen, person_id, hogar_id FROM producto "
+            "WHERE person_id = 1 ORDER BY id").fetchall()
+        self.assertEqual(len(rows), len(demo._PRODUCTOS_DEMO))
+        for r, (nombre_es, nombre_en, marca, *_rest) in zip(rows, demo._PRODUCTOS_DEMO):
+            self.assertEqual(r["nombre_es"], nombre_es)
+            self.assertEqual(r["nombre_en"], nombre_en)
+            self.assertEqual(r["origen"], "manual")
+            self.assertIsNone(r["hogar_id"])
+        nutri_fuentes = {r["fuente"] for r in self.conn.execute(
+            "SELECT DISTINCT fuente FROM producto_nutricion WHERE producto_id IN "
+            "(SELECT id FROM producto WHERE person_id = 1)")}
+        self.assertEqual(nutri_fuentes, {"etiqueta"})
+
+    def test_a_meal_names_two_of_the_invented_products(self):
+        # BODY-COMIDA-PRODUCTO-1: on the earliest seeded day, never the anchor (the anchor day's
+        # own protein_g must stay absent for BODY-HOY-PENDIENTES-REGISTRO-1 ruling 8's own test).
+        fila = self.conn.execute(
+            "SELECT comida_id, producto_id, cantidad, unidad FROM comida_producto cp "
+            "JOIN comida c ON c.id = cp.comida_id WHERE c.person_id = 1 ORDER BY cp.id").fetchall()
+        self.assertEqual(len(fila), 2)
+        self.assertEqual({r["cantidad"] for r in fila}, {500.0, 150.0})
+        self.assertEqual({r["unidad"] for r in fila}, {"g"})
 
     def test_demo_marker_written(self):
         marker = Path(self.folder) / "DEMO"

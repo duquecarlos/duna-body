@@ -13,13 +13,16 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, privacidad, ventana_comida
+from fastapi.testclient import TestClient
+
+from body import config, db, identity, privacidad, productos as productos_mod, ventana_comida, web
 from body.agente import conversacion as agente_conversacion
 from body.agente import herramientas, propuestas
 from body.i18n import T
 from body.rutas import asistente, comun
 
 DAY = "2026-11-05"
+client = TestClient(web.app, follow_redirects=False)
 
 
 def _conn(case: unittest.TestCase) -> "db.sqlite3.Connection":
@@ -258,6 +261,89 @@ class RegistrarComidaProposeApplyUndoTest(unittest.TestCase):
         self.assertTrue(bool(row["estimado"]))
 
 
+# ---- db.crear_comida/corregir_comida(productos=...): the picker's own direct writer door --------
+
+class CrearComidaConProductosTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _conn(self)
+        self.producto_id = productos_mod.crear_producto_manual(self.conn, 1, "Pechuga de pollo")
+        productos_mod.establecer_nutricion(self.conn, self.producto_id, "protein_g", 31.0, "100g", "etiqueta")
+
+    def test_crear_comida_writes_a_comida_producto_row(self):
+        cid = db.crear_comida(
+            self.conn, 1, DAY, [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}],
+            productos=[{"producto_id": self.producto_id, "cantidad": 200.0, "unidad": "g",
+                        "nombre": "Pechuga de pollo"}])
+        fila = self.conn.execute(
+            "SELECT producto_id, cantidad, unidad FROM comida_producto WHERE comida_id = ?", (cid,)).fetchone()
+        self.assertEqual((fila["producto_id"], fila["cantidad"], fila["unidad"]), (self.producto_id, 200.0, "g"))
+
+    def test_comidas_del_dia_resolves_the_product_lines(self):
+        db.crear_comida(
+            self.conn, 1, DAY, [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}],
+            ts_local=f"{DAY}T13:00:00",
+            productos=[{"producto_id": self.producto_id, "cantidad": 200.0, "unidad": "g",
+                        "nombre": "Pechuga de pollo"}])
+        grupos = db.comidas_del_dia(self.conn, 1, DAY)
+        self.assertEqual(len(grupos), 1)
+        self.assertEqual(grupos[0]["productos"],
+                          [{"producto_id": self.producto_id, "nombre": "Pechuga de pollo",
+                            "cantidad": 200.0, "unidad": "g"}])
+
+    def test_a_meal_with_no_products_has_an_empty_productos_list(self):
+        db.crear_comida(self.conn, 1, DAY, [{"metric_key": "protein_g", "amount": 10.0, "estimado": True}],
+                         ts_local=f"{DAY}T08:00:00")
+        grupos = db.comidas_del_dia(self.conn, 1, DAY)
+        self.assertEqual(grupos[0]["productos"], [])
+
+    def test_a_legacy_standalone_ingesta_entry_has_an_empty_productos_list(self):
+        db.registrar_ingesta(self.conn, 1, DAY, "protein_g", 20.0, False, ts_local=f"{DAY}T08:00:00")
+        grupos = db.comidas_del_dia(self.conn, 1, DAY)
+        self.assertEqual(grupos[0]["productos"], [])
+
+    def test_borrar_comida_removes_the_product_lines_too(self):
+        cid = db.crear_comida(
+            self.conn, 1, DAY, [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}],
+            productos=[{"producto_id": self.producto_id, "cantidad": 200.0, "unidad": "g",
+                        "nombre": "Pechuga de pollo"}])
+        db.borrar_comida(self.conn, 1, cid)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM comida_producto").fetchone()[0], 0)
+
+    def test_corregir_comida_with_an_explicit_productos_kwarg_replaces_the_line_set(self):
+        cid = db.crear_comida(
+            self.conn, 1, DAY, [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}],
+            productos=[{"producto_id": self.producto_id, "cantidad": 200.0, "unidad": "g",
+                        "nombre": "Pechuga de pollo"}])
+        otro = productos_mod.crear_producto_manual(self.conn, 1, "Arroz blanco")
+        productos_mod.establecer_nutricion(self.conn, otro, "carbs_g", 28.0, "100g", "etiqueta")
+        db.corregir_comida(
+            self.conn, 1, cid, cantidades=[{"metric_key": "carbs_g", "amount": 42.0, "estimado": False}],
+            productos=[{"producto_id": otro, "cantidad": 150.0, "unidad": "g", "nombre": "Arroz blanco"}])
+        filas = self.conn.execute(
+            "SELECT producto_id FROM comida_producto WHERE comida_id = ?", (cid,)).fetchall()
+        self.assertEqual([r["producto_id"] for r in filas], [otro])
+
+    def test_corregir_comida_without_a_productos_kwarg_leaves_lines_untouched(self):
+        cid = db.crear_comida(
+            self.conn, 1, DAY, [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}],
+            productos=[{"producto_id": self.producto_id, "cantidad": 200.0, "unidad": "g",
+                        "nombre": "Pechuga de pollo"}])
+        db.corregir_comida(self.conn, 1, cid,
+                            cantidades=[{"metric_key": "protein_g", "amount": 70.0, "estimado": False}])
+        filas = self.conn.execute(
+            "SELECT producto_id FROM comida_producto WHERE comida_id = ?", (cid,)).fetchall()
+        self.assertEqual([r["producto_id"] for r in filas], [self.producto_id])
+
+    def test_productos_kwarg_none_leaves_comida_producto_untouched_on_create(self):
+        """BODY-COMIDA-PRODUCTO-1-B: the earlier smuggled-metadata channel is gone --
+        `productos=None` (the default, no kwarg at all) means "nothing to write", never a channel
+        read off `cantidades` itself."""
+        cid = db.crear_comida(self.conn, 1, DAY, [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}])
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM comida_producto WHERE comida_id = ?", (cid,)).fetchone()[0], 0)
+
+
 # ---- card: one block, fixed catalogue order, never raises --------------------------------------
 
 class CardTextTest(unittest.TestCase):
@@ -351,6 +437,107 @@ class ToolRegistryTest(unittest.TestCase):
         nombres = {h["nombre"]: h for h in herramientas.disponibles("ninguno")}
         self.assertIn("registrar_comida", nombres)
         self.assertEqual(nombres["registrar_comida"]["tipo"], "propuesta")
+
+
+# ---- /comida/productos picker: route level (BODY-COMIDA-PRODUCTO-1 ruling 4). No dedicated route
+# test file is in this slice's own touches -- the picker lives in `body/rutas/comida.py`, which is
+# not itself a touched test file -- so these route-level checks live here too, the same precedent
+# tests/test_comida_compartida.py's own "ruling 5" section set for a route module not in touches.
+
+def _reset_web_db(tc: unittest.TestCase):
+    orig = config.DB_PATH
+    tc.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+    tc.addCleanup(web.app.dependency_overrides.clear)
+    config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "comida-web.db"
+    conn = db.connect()
+    tc.addCleanup(conn.close)
+    db.init(conn)
+    conn.commit()
+    web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+    return conn
+
+
+class PickerRouteTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _reset_web_db(self)
+        self.pollo = productos_mod.crear_producto_manual(self.conn, 1, "Pechuga de pollo")
+        productos_mod.establecer_nutricion(self.conn, self.pollo, "protein_g", 31.0, "100g", "etiqueta")
+        self.conn.commit()
+
+    def test_get_lists_visible_products(self):
+        r = client.get("/comida/productos")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Pechuga de pollo", r.text)
+
+    def test_search_filters_the_list(self):
+        r = client.get("/comida/productos", params={"q": "pechuga"})
+        self.assertIn("Pechuga de pollo", r.text)
+        r2 = client.get("/comida/productos", params={"q": "zzz-no-existe"})
+        self.assertNotIn("Pechuga de pollo", r2.text)
+
+    def test_agregar_adds_an_encoded_draft_line_and_redirects_back(self):
+        r = client.get("/comida/productos/agregar",
+                        params={"producto_id": self.pollo, "cantidad": 200.0, "unidad": "g"})
+        self.assertEqual(r.status_code, 303)
+        self.assertIn(f"linea={self.pollo}%3A200.0%3Ag", r.headers["location"])
+
+    def test_agregar_ignores_an_unseen_product(self):
+        r = client.get("/comida/productos/agregar", params={"producto_id": 999, "cantidad": 1.0, "unidad": "g"})
+        self.assertEqual(r.status_code, 303)
+        self.assertNotIn("linea=", r.headers["location"])
+
+    def test_guardar_writes_a_meal_through_the_same_writer_as_the_assistant(self):
+        r = client.post("/comida/productos/guardar",
+                         data={"linea": f"{self.pollo}:200:g", "descripcion": "pollo a la plancha", "q": ""})
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers["location"], "/")
+        fila = self.conn.execute("SELECT descripcion FROM comida WHERE person_id = 1").fetchone()
+        self.assertEqual(fila["descripcion"], "pollo a la plancha")
+        producto_fila = self.conn.execute(
+            "SELECT producto_id, cantidad, unidad FROM comida_producto WHERE comida_id = "
+            "(SELECT id FROM comida WHERE person_id = 1)").fetchone()
+        self.assertEqual((producto_fila["producto_id"], producto_fila["cantidad"], producto_fila["unidad"]),
+                          (self.pollo, 200.0, "g"))
+
+    def test_guardar_with_no_lines_shows_an_error_and_writes_nothing(self):
+        r = client.post("/comida/productos/guardar", data={"descripcion": "nada"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida").fetchone()[0], 0)
+
+    def test_guardar_with_a_unit_mismatch_shows_the_error_and_writes_nothing(self):
+        r = client.post("/comida/productos/guardar", data={"linea": f"{self.pollo}:1:ml"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Pechuga de pollo", r.text)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM comida").fetchone()[0], 0)
+
+    def test_nuevo_creates_a_manual_product_with_label_nutrition(self):
+        r = client.post("/comida/productos/nuevo", data={
+            "nombre": "Arroz blanco", "marca": "Demo", "tamano_neto": "1000", "tamano_unidad": "g",
+            "valor_carbs_g": "28", "valor_kcal": "130",
+        })
+        self.assertEqual(r.status_code, 303)
+        fila = self.conn.execute("SELECT marca FROM producto WHERE nombre = 'Arroz blanco'").fetchone()
+        self.assertIsNotNone(fila)
+        self.assertEqual(fila["marca"], "Demo")
+        nutri = {r2["metric_key"]: r2["amount_per"] for r2 in self.conn.execute(
+            "SELECT metric_key, amount_per FROM producto_nutricion WHERE producto_id = "
+            "(SELECT id FROM producto WHERE nombre = 'Arroz blanco')")}
+        self.assertEqual(nutri, {"carbs_g": 28.0, "kcal": 130.0})
+
+    def test_nuevo_without_a_name_shows_an_error_and_creates_nothing(self):
+        before = self.conn.execute("SELECT COUNT(*) FROM producto").fetchone()[0]
+        r = client.post("/comida/productos/nuevo", data={"nombre": "   "})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM producto").fetchone()[0], before)
+
+    def test_another_persons_product_never_appears_in_the_list(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Otra')")
+        otro = productos_mod.crear_producto_manual(self.conn, 2, "Secreto de Otra")
+        self.conn.commit()
+        r = client.get("/comida/productos")
+        self.assertNotIn("Secreto de Otra", r.text)
+        r2 = client.get("/comida/productos/agregar", params={"producto_id": otro, "cantidad": 1.0, "unidad": "g"})
+        self.assertNotIn("linea=", r2.headers["location"])
 
 
 # ---- export / delete ------------------------------------------------------------------------------

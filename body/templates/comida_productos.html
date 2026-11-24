@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ t('comida.productos.titulo') }} · {{ t('app.name') }}{% endblock %}
+{% block main %}
+<div class="top"><div><h1>{{ t('comida.productos.titulo') }}</h1></div></div>
+
+{% if error %}
+<div class="card"><p class="read">{{ error }}</p></div>
+{% endif %}
+
+{% if draft %}
+<div class="card">
+  <div class="q">{{ t('comida.productos.draft_titulo') }}</div>
+  <ul class="plan mt-6">
+  {% for l in draft %}
+    <li class="block">
+      <div class="k">{{ l.nombre }}</div>
+      <div class="note">{{ l.cantidad }} {{ l.unidad_label }}</div>
+    </li>
+  {% endfor %}
+  </ul>
+  <form method="post" action="/comida/productos/guardar" class="mt-12">
+    {% for l in draft %}<input type="hidden" name="linea" value="{{ l.codificada }}">{% endfor %}
+    <input type="hidden" name="q" value="{{ q }}">
+    <input type="text" name="descripcion" class="field mb-12" placeholder="{{ t('comida.productos.titulo') }}" aria-label="{{ t('comida.productos.titulo') }}">
+    <button class="btn" type="submit">{{ t('comida.productos.guardar_comida') }}</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="get" action="/comida/productos">
+    {% for l in draft %}<input type="hidden" name="linea" value="{{ l.codificada }}">{% endfor %}
+    <input type="text" name="q" value="{{ q }}" class="field mb-12" placeholder="{{ t('comida.productos.buscar') }}" aria-label="{{ t('comida.productos.buscar') }}">
+    <button class="btn" type="submit">{{ t('comida.productos.buscar') }}</button>
+  </form>
+</div>
+
+{% if productos %}
+{% for p in productos %}
+<div class="card">
+  <div class="q">{{ p.nombre }}{% if p.marca %} · {{ p.marca }}{% endif %}</div>
+  <form method="get" action="/comida/productos/agregar" class="mt-12">
+    <input type="hidden" name="producto_id" value="{{ p.id }}">
+    {% for l in draft %}<input type="hidden" name="linea" value="{{ l.codificada }}">{% endfor %}
+    <input type="hidden" name="q" value="{{ q }}">
+    <div class="q">{{ t('comida.productos.cantidad_etiqueta') }}</div>
+    <input type="number" inputmode="decimal" step="any" min="0" name="cantidad" class="field mb-12" required aria-label="{{ t('comida.productos.cantidad_etiqueta') }}">
+    <select name="unidad" class="field mb-12" aria-label="{{ t('comida.productos.unidad_label') }}">
+    {% for opt in unidad_opciones %}
+      <option value="{{ opt.value }}" {% if p.unidad == opt.value %}selected{% endif %}>{{ opt.label }}</option>
+    {% endfor %}
+    </select>
+    <button class="btn" type="submit">{{ t('comida.productos.agregar') }}</button>
+  </form>
+</div>
+{% endfor %}
+{% elif q %}
+<div class="card"><p class="read">{{ t('comida.productos.vacio') }}</p></div>
+{% else %}
+<div class="card"><p class="read">{{ t('comida.productos.sin_productos') }}</p></div>
+{% endif %}
+
+<div class="card">
+  <div class="q">{{ t('comida.productos.nuevo') }}</div>
+  <form method="post" action="/comida/productos/nuevo" class="mt-12">
+    {% for l in draft %}<input type="hidden" name="linea" value="{{ l.codificada }}">{% endfor %}
+    <input type="hidden" name="q" value="{{ q }}">
+    <div class="q">{{ t('comida.productos.nombre_label') }}</div>
+    <input type="text" name="nombre" class="field mb-12" required aria-label="{{ t('comida.productos.nombre_label') }}">
+    <div class="q">{{ t('comida.productos.marca_label') }}</div>
+    <input type="text" name="marca" class="field mb-12" aria-label="{{ t('comida.productos.marca_label') }}">
+    <div class="q">{{ t('comida.productos.tamano_label') }}</div>
+    <input type="number" inputmode="decimal" step="any" min="0" name="tamano_neto" class="field mb-12" aria-label="{{ t('comida.productos.tamano_label') }}">
+    <select name="tamano_unidad" class="field mb-12" aria-label="{{ t('comida.productos.unidad_label') }}">
+      <option value="">—</option>
+    {% for opt in unidad_opciones %}
+      <option value="{{ opt.value }}">{{ opt.label }}</option>
+    {% endfor %}
+    </select>
+    <p class="note">{{ t('comida.productos.fuente_etiqueta') }}</p>
+  {% for campo in nutriente_campos %}
+    <div class="q">{{ campo.label }}</div>
+    <input type="number" inputmode="decimal" step="any" min="0" name="valor_{{ campo.key }}" class="field mb-12" aria-label="{{ campo.label }}">
+  {% endfor %}
+    <button class="btn" type="submit">{{ t('comida.productos.crear_btn') }}</button>
+  </form>
+</div>
+{% endblock %}

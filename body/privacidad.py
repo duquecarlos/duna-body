@@ -103,6 +103,15 @@ FULLY_HANDLED_TABLES = {
     # person_id (reached through set_pregunta_id, like habit/goal_enlace above) and is exported/
     # deleted by hand, below.
     "set_pregunta", "set_pregunta_respuesta",
+    # BODY-COMIDA-PRODUCTO-1 ruling 6: a 'manual' product belongs to the person who typed it
+    # (person_id literal, nullable for a 'despensa' product -- never matched by this person's own
+    # numeric id, so the generic person_id=? scope already excludes a household product on its
+    # own). Household products are not exported or deleted with one member. producto_nutricion
+    # (reached through producto_id, like habit/goal_enlace above) and comida_producto (reached
+    # through comida_id -> comida.person_id, the same by-hand pattern comida_compartida's own
+    # autor_person_id already uses) carry no literal person_id and are exported/deleted by hand,
+    # below.
+    "producto",
 }
 # raw_payload: kind/date only, never the stored JSON payload. garmin_cuenta: the connected-since
 # date only, never the encrypted token (BODY-GARMIN-HOST-1). dispositivo: name/scopes/dates only,
@@ -328,6 +337,21 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     comidas_compartidas_porciones = [dict(r) for r in conn.execute(
         "SELECT id, comida_compartida_id, descripcion, porcion_texto, nutrientes, estado, comida_id, "
         "decided_at FROM comida_compartida_porcion WHERE person_id = ? ORDER BY id", (person_id,))]
+    # BODY-COMIDA-PRODUCTO-1 ruling 6: this person's own manually-typed products (never a
+    # household's, scoped by the literal person_id column) and their own nutrition
+    # (producto_nutricion carries no person_id, joined through producto_id). comida_producto (a
+    # meal's own product lines, no person_id either) is reached through comida_id -> comida's own
+    # person_id, like comida_compartida above.
+    productos_mios = [dict(r) for r in conn.execute(
+        "SELECT id, origen, nombre, nombre_es, nombre_en, marca, tamano_neto, tamano_unidad, "
+        "codigo_barras, created_at FROM producto WHERE person_id = ? ORDER BY id", (person_id,))]
+    productos_nutricion_mia = [dict(r) for r in conn.execute(
+        "SELECT pn.producto_id, pn.metric_key, pn.amount_per, pn.basis, pn.fuente FROM producto_nutricion pn "
+        "JOIN producto p ON p.id = pn.producto_id WHERE p.person_id = ? ORDER BY pn.producto_id, pn.metric_key",
+        (person_id,))]
+    comida_producto_filas = [dict(r) for r in conn.execute(
+        "SELECT cp.id, cp.comida_id, cp.producto_id, cp.cantidad, cp.unidad, cp.created_at FROM comida_producto cp "
+        "JOIN comida c ON c.id = cp.comida_id WHERE c.person_id = ? ORDER BY cp.id", (person_id,))]
     # aplicar_mcp (BODY-MCP-APLICAR-1, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 7): the person's own
     # setting that lets their personal assistant apply a change it proposed, in their own export.
     ajustes = {"nivel_datos": agente_ajustes.nivel_datos(conn, person_id),
@@ -400,6 +424,9 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "consentimiento_comidas_compartidas": consentimiento_comidas_compartidas,
         "comidas_compartidas_mias": comidas_compartidas_mias,
         "comidas_compartidas_porciones": comidas_compartidas_porciones,
+        "productos": productos_mios,
+        "productos_nutricion": productos_nutricion_mia,
+        "comida_producto": comida_producto_filas,
         "vida": vida,
         "experimentos": experimentos,
         "horizonte": horizonte,
@@ -467,7 +494,23 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM comida_compartida_porcion WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM comida_compartida WHERE autor_person_id = ?", (person_id,))
         conn.execute("DELETE FROM ingesta WHERE person_id = ?", (person_id,))
+        # BODY-COMIDA-PRODUCTO-1 ruling 6: this person's own meals' own product lines -- deleted
+        # before `comida` itself goes, same FK-order reasoning as every other child row above
+        # (comida_producto.comida_id carries no CASCADE).
+        conn.execute(
+            "DELETE FROM comida_producto WHERE comida_id IN (SELECT id FROM comida WHERE person_id = ?)",
+            (person_id,),
+        )
         conn.execute("DELETE FROM comida WHERE person_id = ?", (person_id,))
+        # BODY-COMIDA-PRODUCTO-1 ruling 6: this person's own MANUAL products and their nutrition --
+        # a household product is not deleted with one member, so this never touches `producto`
+        # rows scoped by hogar_id. producto_nutricion carries no person_id of its own (joined
+        # through producto_id, like set_pregunta_item above), deleted before `producto` itself goes.
+        conn.execute(
+            "DELETE FROM producto_nutricion WHERE producto_id IN (SELECT id FROM producto WHERE person_id = ?)",
+            (person_id,),
+        )
+        conn.execute("DELETE FROM producto WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM period WHERE person_id = ?", (person_id,))
         db.invalidar_periodos_cache(conn, person_id)
         conn.execute("DELETE FROM nutrient_target WHERE person_id = ?", (person_id,))

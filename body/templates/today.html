@@ -213,6 +213,7 @@
   {% endif %}
   {% if ventana.ayuno_ahora %}<p class="note mt-6 mb-0">{{ t('today.ventana.ayuno_ahora', horas=ventana.ayuno_ahora) }}</p>{% endif %}
   {% if ventana.comida_sueno %}<p class="note mt-6 mb-0">{{ t('today.ventana.comida_sueno', horas=ventana.comida_sueno) }}</p>{% endif %}
+  <a class="taplink mt-6" href="/comida/productos">{{ t('comida.productos.desde_hoy') }}</a>
 </div>
 
 {% if objetivos_nutriente %}

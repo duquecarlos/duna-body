@@ -58,6 +58,10 @@ ROUTE_TOOL = {
     # ORCH-CARLOS-DELEGATES-TIER-1-1 (BODY-PARTIDO-1-ASIS): leer_entreno now reads every session of
     # the day/range, any sport, each with the same effort summary this page's own card shows.
     "/day/{day}/entreno/{source_id}": "leer_entreno",
+    # BODY-COMIDA-PRODUCTO-1 ruling 4: the picker's own search/list screen, backed by the same
+    # buscar_productos tool the assistant uses to resolve a product name.
+    "/comida/productos": "buscar_productos",
+    "/comida/productos/agregar": None,  # adds one draft line and redirects back, not a data screen
 }
 
 WRITER_NAMES = {
@@ -113,6 +117,7 @@ def _all_tool_calls():
         "buscar_noches": {},
         "leer_plan": gid_placeholder, "leer_planes": {}, "leer_practicas": {},
         "leer_altitudes": {}, "leer_pendientes_registro": {},
+        "buscar_productos": {"texto": "pollo"},
     }
 
 
@@ -177,7 +182,7 @@ PROPUESTA_NOMBRES = {"proponer_meta", "proponer_cambio_meta", "proponer_confirma
                      "marcar_habito",
                      "proponer_experimento", "marcar_experimento",
                      "registrar_ingesta", "corregir_ingesta", "borrar_ingesta", "registrar_comida",
-                     "corregir_comida",
+                     "corregir_comida", "crear_producto",
                      "registrar_checkin", "marcar_periodo", "cerrar_periodo", "corregir_periodo",
                      "borrar_periodo", "descartar_series", "separar_sesion", "unir_sesiones",
                      "proponer_objetivo_nutriente",
@@ -225,9 +230,12 @@ class RegistryShapeTest(unittest.TestCase):
             # the one new entry, at nivel 'ninguno' like leer_dias_libres/leer_altitudes: it carries
             # no health figure either, only whether a log stream has something or nothing yet.
             "leer_pendientes_registro": "ninguno",
+            # BODY-COMIDA-PRODUCTO-1 ruling 3: extended from twenty-five -- buscar_productos is the
+            # one new entry, at nivel 'ninguno' (a product's name/brand carries no health figure).
+            "buscar_productos": "ninguno",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 25)
+        self.assertEqual(len(lectura), 26)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_thirty_propuesta_tools_with_one_at_nivel_resumen(self):
@@ -246,6 +254,8 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-PLAN-FASES-2 ruling 3: extended from 33 -- corregir_fase is the one new entry, also
         # at nivel 'ninguno'.
         # BODY-MINUTO-ANALISIS-6-ALTITUD: extended from 34 -- registrar_altitud is the one new
+        # entry, also at nivel 'ninguno'.
+        # BODY-COMIDA-PRODUCTO-1-B ruling B: extended from 35 -- crear_producto is the one new
         # entry, also at nivel 'ninguno'.
         propuesta = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "propuesta"]
         self.assertEqual({h["nombre"] for h in propuesta}, PROPUESTA_NOMBRES)
@@ -272,7 +282,9 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-MINUTO-ANALISIS-6-ALTITUD: extended from 57 -- registrar_altitud and leer_altitudes
         # are the two new entries.
         # BODY-REGISTRO-COBERTURA-1: extended from 59 -- leer_pendientes_registro is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 60)
+        # BODY-COMIDA-PRODUCTO-1: extended from 60 -- buscar_productos is the one new entry.
+        # BODY-COMIDA-PRODUCTO-1-B ruling B: extended from 61 -- crear_producto is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 62)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

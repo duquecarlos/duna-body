@@ -51,6 +51,10 @@ _ALWAYS_404_LOCAL = {
     "/api/hogar/herramientas",
 }
 _TURNOS_GATED = {"/shifts", "/shifts/como", "/shifts/patron"}
+# BODY-COMIDA-PRODUCTO-1-B: a no-JS form action encoded as GET (body/rutas/comida.py's own
+# docstring) -- called with no query string (every other param-less route in this sweep), it has
+# nothing to add and redirects straight back to the picker, never a page of its own.
+_ALWAYS_REDIRECT = {"/comida/productos/agregar"}
 # Needs a seeded conversation (body/agente, outside this slice's touches) -- see module docstring.
 _SKIPPED_PARAM_ROUTES = {"/asistente/conversacion/{conversacion_id}"}
 
@@ -233,6 +237,8 @@ LANGS = ("es", "en")
 def _expected_statuses(path: str, turnos_on: bool) -> set:
     if path in _ALWAYS_404_LOCAL:
         return {404}
+    if path in _ALWAYS_REDIRECT:
+        return {303}
     if path in _TURNOS_GATED:
         return {200} if turnos_on else {404}
     return {200}

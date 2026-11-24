@@ -16,7 +16,8 @@ from fastapi.testclient import TestClient
 
 from body import comida_compartida as cc
 from body import (
-    compartir, config, cuenta, db, dispositivo, goals, identity, noche_inusual, practicas, privacidad, web,
+    compartir, config, cuenta, db, dispositivo, goals, identity, noche_inusual, practicas, privacidad,
+    productos as productos_mod, web,
 )
 from body.agente import conversacion as agente_conversacion
 from body.agente import propuestas as agente_propuestas
@@ -1011,6 +1012,80 @@ class ComidaCompartidaExportDeleteTest(unittest.TestCase):
         self.assertEqual(
             self.conn.execute(
                 "SELECT COUNT(*) FROM consentimiento_comida_compartida WHERE person_id = 2").fetchone()[0], 0)
+
+
+class ProductoExportDeleteTest(unittest.TestCase):
+    """BODY-COMIDA-PRODUCTO-1 ruling 6: a person's own MANUAL product and its nutrition are fully
+    exported and deleted with them; a household product is neither exported nor deleted with one
+    member. `producto_nutricion` and `comida_producto` carry no literal person_id -- handled by
+    hand, the same pattern comida_compartida_porcion's own autor_person_id already uses."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "producto.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        self.conn.commit()
+        self.producto_id = productos_mod.crear_producto_manual(self.conn, 1, "Pechuga de pollo")
+        productos_mod.establecer_nutricion(self.conn, self.producto_id, "protein_g", 31.0, "100g", "etiqueta")
+        self.conn.commit()
+
+    def test_producto_is_a_fully_handled_table(self):
+        self.assertIn("producto", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_includes_the_persons_own_manual_product_and_its_nutrition(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["productos"]), 1)
+        self.assertEqual(data["productos"][0]["nombre"], "Pechuga de pollo")
+        self.assertEqual(len(data["productos_nutricion"]), 1)
+        self.assertEqual(data["productos_nutricion"][0]["metric_key"], "protein_g")
+
+    def test_export_of_another_person_sees_nothing(self):
+        data = privacidad.export_person(self.conn, 2)
+        self.assertEqual(data["productos"], [])
+        self.assertEqual(data["productos_nutricion"], [])
+
+    def test_export_includes_this_persons_own_meal_product_lines(self):
+        db.crear_comida(self.conn, 1, "2026-11-10",
+                         [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}],
+                         productos=[{"producto_id": self.producto_id, "cantidad": 200.0, "unidad": "g",
+                                     "nombre": "Pechuga de pollo"}])
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["comida_producto"]), 1)
+        self.assertEqual(data["comida_producto"][0]["producto_id"], self.producto_id)
+
+    def test_delete_all_removes_the_product_and_its_nutrition(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM producto WHERE person_id = 1").fetchone()[0], 0)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM producto_nutricion WHERE producto_id = ?",
+                               (self.producto_id,)).fetchone()[0], 0)
+
+    def test_delete_all_removes_this_persons_own_meal_product_lines(self):
+        cid = db.crear_comida(self.conn, 1, "2026-11-10",
+                               [{"metric_key": "protein_g", "amount": 62.0, "estimado": False}],
+                               productos=[{"producto_id": self.producto_id, "cantidad": 200.0, "unidad": "g",
+                                           "nombre": "Pechuga de pollo"}])
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM comida_producto WHERE comida_id = ?", (cid,)).fetchone()[0], 0)
+
+    def test_a_household_product_is_neither_exported_nor_deleted_with_one_member(self):
+        self.conn.execute(
+            "INSERT INTO hogar_miembro (person_id, hogar_id, actualizado_at) VALUES "
+            "(1, 'hogar-1', '2026-01-01T00:00:00+00:00')")
+        self.conn.execute(
+            "INSERT INTO producto (hogar_id, origen, nombre, created_at) VALUES "
+            "('hogar-1', 'despensa', 'Leche entera', '2026-01-01T00:00:00+00:00')")
+        self.conn.commit()
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual([p["nombre"] for p in data["productos"]], ["Pechuga de pollo"])
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM producto WHERE hogar_id = 'hogar-1'").fetchone()[0], 1)
 
 
 class UsoHerramientaExternaExportDeleteTest(unittest.TestCase):

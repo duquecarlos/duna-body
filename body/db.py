@@ -111,7 +111,8 @@ _PROPUESTA_AGENTE_COLUMNS = """
                          'separar_sesion', 'unir_sesiones', 'proponer_objetivo_nutriente',
                          'proponer_plan', 'corregir_meta_plan', 'ampliar_plan', 'anotar_sesion',
                          'corregir_entreno', 'importar_desplazamiento', 'proponer_practica',
-                         'corregir_despertar', 'registrar_dolor', 'corregir_fase', 'registrar_altitud')),
+                         'corregir_despertar', 'registrar_dolor', 'corregir_fase', 'registrar_altitud',
+                         'crear_producto')),
     objetivo_id     INTEGER REFERENCES goal(id),
     antes_json      TEXT CHECK (antes_json IS NULL OR json_valid(antes_json)),
     despues_json    TEXT NOT NULL CHECK (json_valid(despues_json)),
@@ -1256,6 +1257,78 @@ CREATE TABLE IF NOT EXISTS altitud_estancia (
     CHECK (end_day IS NULL OR start_day <= end_day)
 );
 CREATE INDEX IF NOT EXISTS idx_altitud_estancia_person ON altitud_estancia(person_id);
+
+-- BODY-COMIDA-PRODUCTO-1: a product Body knows, nutrition kept ONCE per product (Carlos's own
+-- idea, 2026-11-23: a grocery receipt fills Hogar's pantry, and "same will then serve as meals in
+-- the body app to store it easily, because we can have all the info from the start" -- the
+-- pantry read itself is BODY-COMIDA-PRODUCTO-2-DESPENSA, this schema is shaped for it, unfilled
+-- this slice.
+--
+-- Ownership (CORRECTED by the orchestrator from the INV's design, so one person's own typed
+-- product never leaks across a household): a 'manual' product -- typed by hand, this slice's only
+-- origin -- belongs to the person who typed it (person_id); a 'despensa' product (the next slice)
+-- belongs to the household it came from (hogar_id, body/household.py's Household.id) -- never
+-- both, never neither (the CHECK below). Every READ of products goes through the one function in
+-- body/productos.py that scopes to the signed-in person's own manual products plus their active
+-- household's (household.household_of) -- never a raw SELECT anywhere else.
+--
+-- nombre_es/nombre_en/alias/marca/tamano_neto/tamano_unidad/codigo_barras/en_despensa/
+-- comprado_en/sincronizado_en are the despensa-v1 shape, kept here unfilled for the next slice; a
+-- manual product (this slice) sets `nombre` (and, optionally, marca/tamano_neto/tamano_unidad)
+-- only.
+CREATE TABLE IF NOT EXISTS producto (
+    id              INTEGER PRIMARY KEY,
+    person_id       INTEGER REFERENCES person(id),
+    hogar_id        TEXT,
+    origen          TEXT NOT NULL CHECK (origen IN ('manual', 'despensa')),
+    origen_ref      TEXT,
+    nombre          TEXT NOT NULL,
+    nombre_es       TEXT,
+    nombre_en       TEXT,
+    alias           TEXT,
+    marca           TEXT,
+    tamano_neto     REAL,
+    tamano_unidad   TEXT CHECK (tamano_unidad IN ('g', 'ml', 'unidad')),
+    codigo_barras   TEXT,
+    en_despensa     INTEGER NOT NULL DEFAULT 0 CHECK (en_despensa IN (0, 1)),
+    comprado_en     TEXT,
+    sincronizado_en TEXT,
+    created_at      TEXT NOT NULL,
+    CHECK ((person_id IS NOT NULL) + (hogar_id IS NOT NULL) = 1)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_producto_origen_ref
+    ON producto (origen, hogar_id, origen_ref) WHERE origen_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_producto_person ON producto(person_id);
+CREATE INDEX IF NOT EXISTS idx_producto_hogar ON producto(hogar_id);
+
+-- One nutrient figure per product, kept ONCE -- never re-estimated per meal. `basis` is how
+-- `amount_per` reads (100g/100ml/one unidad); `fuente` is where it came from. A later value for
+-- the same (producto_id, metric_key) REPLACES the old one (body/productos.py's own upsert).
+CREATE TABLE IF NOT EXISTS producto_nutricion (
+    id          INTEGER PRIMARY KEY,
+    producto_id INTEGER NOT NULL REFERENCES producto(id),
+    metric_key  TEXT NOT NULL REFERENCES metric_def(key),
+    amount_per  REAL NOT NULL CHECK (amount_per > 0),
+    basis       TEXT NOT NULL CHECK (basis IN ('100g', '100ml', 'unidad')),
+    fuente      TEXT NOT NULL CHECK (fuente IN ('etiqueta', 'consulta', 'estimado'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_producto_nutricion_unica
+    ON producto_nutricion (producto_id, metric_key);
+
+-- One line of a meal naming a product and a portion -- additive beside `ingesta`'s own computed
+-- amounts; body/db.py's own _crear_comida_tx/corregir_comida write both in the same transaction.
+-- No literal person_id (ruling 6): reached through comida_id -> comida.person_id, the same
+-- by-hand pattern body/privacidad.py already uses for comida_compartida's own autor_person_id.
+CREATE TABLE IF NOT EXISTS comida_producto (
+    id          INTEGER PRIMARY KEY,
+    comida_id   INTEGER NOT NULL REFERENCES comida(id),
+    producto_id INTEGER NOT NULL REFERENCES producto(id),
+    cantidad    REAL NOT NULL CHECK (cantidad > 0),
+    unidad      TEXT NOT NULL CHECK (unidad IN ('g', 'ml', 'unidad')),
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_comida_producto_comida ON comida_producto(comida_id);
+CREATE INDEX IF NOT EXISTS idx_comida_producto_producto ON comida_producto(producto_id);
 """
 
 # (key, label, unit, better, kind). 'estimated' = computed by Body, shown with «≈» and "how I calculate it".
@@ -2084,6 +2157,13 @@ def _propuesta_agente_needs_registrar_altitud_rebuild(conn: sqlite3.Connection) 
     return row is not None and "registrar_altitud" not in row[0]
 
 
+def _propuesta_agente_needs_crear_producto_rebuild(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'propuesta_agente'"
+    ).fetchone()
+    return row is not None and "crear_producto" not in row[0]
+
+
 def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
@@ -2162,6 +2242,10 @@ def _migrate_propuestas(conn: sqlite3.Connection) -> None:
     # BODY-MINUTO-ANALISIS-6-ALTITUD (ORCH-CARLOS-DELEGATES-TIER-1-1): a nineteenth widening
     # (registrar_altitud), same reusable rebuild.
     if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_registrar_altitud_rebuild(conn):
+        _rebuild_propuesta_agente_table(conn)
+
+    # BODY-COMIDA-PRODUCTO-1-B: a twentieth widening (crear_producto), same reusable rebuild.
+    if _table_exists(conn, "propuesta_agente") and _propuesta_agente_needs_crear_producto_rebuild(conn):
         _rebuild_propuesta_agente_table(conn)
 
 
@@ -4060,13 +4144,37 @@ def borrar_nutrient_target(conn: sqlite3.Connection, person_id: int, metric_key:
 # registrar_ingesta/corregir_ingesta/borrar_ingesta already use, so a meal's amounts sum into
 # daily_metric exactly like a standalone intake entry does.
 
+def _lineas_producto_comida(productos: list[dict] | None) -> tuple[bool, list[dict]]:
+    """BODY-COMIDA-PRODUCTO-1-B: whether there is anything to write to `comida_producto`, and
+    what. `productos` is now the ONE channel -- the picker's own direct call
+    (body/rutas/comida.py) and body/agente/propuestas.py's own _aplicar_registrar_comida/
+    _aplicar_corregir_comida (which forward the proposal row's own named `productos` field) both
+    pass it explicitly; the earlier smuggled-metadata channel through `cantidades[0]` is removed.
+    Returns (True, lineas) when there is something to write, including an explicit empty list (a
+    correction clearing every product line); (False, []) when `comida_producto` must be left
+    exactly as it is."""
+    if productos is not None:
+        return True, productos
+    return False, []
+
+
+def _escribir_comida_producto(conn: sqlite3.Connection, comida_id: int, lineas: list[dict], now: str) -> None:
+    for p in lineas:
+        conn.execute(
+            "INSERT INTO comida_producto (comida_id, producto_id, cantidad, unidad, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (comida_id, p["producto_id"], p["cantidad"], p["unidad"], now),
+        )
+
+
 def _crear_comida_tx(conn: sqlite3.Connection, person_id: int, day: str, cantidades: list[dict],
                       descripcion: str | None = None, ts_local: str | None = None,
-                      momento: str | None = None) -> int:
+                      momento: str | None = None, productos: list[dict] | None = None) -> int:
     """`crear_comida`'s own body, without its own `with conn:` -- for a caller (body/comida_compartida.py)
     that must write several rows of its own alongside this one, in ONE transaction. `momento`
     (BODY-HOGAR-ESCRIBE-1-W ruling 3): the clave the person named this meal's own moment, or None to
-    derive it from ts_local, as before this argument existed."""
+    derive it from ts_local, as before this argument existed. `productos` (BODY-COMIDA-PRODUCTO-1):
+    see `_lineas_producto_comida` above."""
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     cur = conn.execute(
         "INSERT INTO comida (person_id, day, ts_local, descripcion, created_at, updated_at, momento) "
@@ -4082,17 +4190,22 @@ def _crear_comida_tx(conn: sqlite3.Connection, person_id: int, day: str, cantida
              comida_id, now, now),
         )
         _recalcular_ingesta_dia(conn, person_id, day, c["metric_key"])
+    _, lineas = _lineas_producto_comida(productos)
+    if lineas:
+        _escribir_comida_producto(conn, comida_id, lineas, now)
     return comida_id
 
 
 def crear_comida(conn: sqlite3.Connection, person_id: int, day: str, cantidades: list[dict],
                   descripcion: str | None = None, ts_local: str | None = None,
-                  momento: str | None = None) -> int:
+                  momento: str | None = None, productos: list[dict] | None = None) -> int:
     """`cantidades`: a list of {metric_key, amount, estimado}, already validated by the caller
     (herramientas._registrar_comida) -- one per key, amount > 0. Writes the `comida` row and every
-    child `ingesta` row in one transaction, recalculating each touched key's day total."""
+    child `ingesta` row in one transaction, recalculating each touched key's day total. `productos`
+    (BODY-COMIDA-PRODUCTO-1): optional [{producto_id, cantidad, unidad, nombre}] -- this meal's own
+    product lines, written to `comida_producto` in the SAME transaction."""
     with conn:
-        return _crear_comida_tx(conn, person_id, day, cantidades, descripcion, ts_local, momento)
+        return _crear_comida_tx(conn, person_id, day, cantidades, descripcion, ts_local, momento, productos)
 
 
 def _borrar_comida_tx(conn: sqlite3.Connection, person_id: int, comida_id: int) -> None:
@@ -4107,6 +4220,9 @@ def _borrar_comida_tx(conn: sqlite3.Connection, person_id: int, comida_id: int) 
     claves = [r["metric_key"] for r in conn.execute(
         "SELECT DISTINCT metric_key FROM ingesta WHERE comida_id = ?", (comida_id,))]
     conn.execute("DELETE FROM ingesta WHERE comida_id = ?", (comida_id,))
+    # BODY-COMIDA-PRODUCTO-1: this meal's own product lines, if any -- deleted first, same FK-order
+    # reasoning as every other child row above (comida_producto.comida_id carries no CASCADE).
+    conn.execute("DELETE FROM comida_producto WHERE comida_id = ?", (comida_id,))
     conn.execute("DELETE FROM comida WHERE id = ?", (comida_id,))
     for metric_key in claves:
         _recalcular_ingesta_dia(conn, person_id, day, metric_key)
@@ -4121,7 +4237,7 @@ def borrar_comida(conn: sqlite3.Connection, person_id: int, comida_id: int) -> N
 
 def corregir_comida(conn: sqlite3.Connection, person_id: int, comida_id: int, *, ts_local: str | None = None,
                      day: str | None = None, descripcion: str | None = None,
-                     cantidades: list[dict] | None = None) -> None:
+                     cantidades: list[dict] | None = None, productos: list[dict] | None = None) -> None:
     """Corrects a meal AS A UNIT (BODY-COMIDA-CORREGIR-1 ruling 1): the one writer of a `comida`
     row's own day/ts_local/descripcion, unconditionally set to whatever the caller passes --
     the caller (body/agente/propuestas.py) always carries a meal's FULL resolved state in
@@ -4131,7 +4247,11 @@ def corregir_comida(conn: sqlite3.Connection, person_id: int, comida_id: int, *,
     shape `crear_comida` itself writes with; left out (None), the existing rows just follow the
     meal's own new day/ts_local. Refuses a comida_id that is not this person's own. Re-derives
     every touched metric_key's daily total in the SAME transaction, for both the old day and the
-    new one when the day moves."""
+    new one when the day moves. `productos` (BODY-COMIDA-PRODUCTO-1), given only alongside
+    `cantidades` (herramientas.py's own rule -- changing which products this meal names always
+    recomputes the resulting amounts too): REPLACES the meal's whole `comida_producto` set, the
+    same full-replace convention `cantidades` itself already uses; left out (None) while
+    `cantidades` IS given, the meal's existing product lines are left exactly as they are."""
     fila = conn.execute("SELECT day FROM comida WHERE id = ? AND person_id = ?", (comida_id, person_id)).fetchone()
     if fila is None:
         raise ValueError("comida_id: not this person's own meal")
@@ -4156,6 +4276,10 @@ def corregir_comida(conn: sqlite3.Connection, person_id: int, comida_id: int, *,
                      int(bool(c.get("estimado", True))), comida_id, now, now),
                 )
             claves |= {c["metric_key"] for c in cantidades}
+            reemplazar, lineas = _lineas_producto_comida(productos)
+            if reemplazar:
+                conn.execute("DELETE FROM comida_producto WHERE comida_id = ?", (comida_id,))
+                _escribir_comida_producto(conn, comida_id, lineas, now)
         else:
             conn.execute("UPDATE ingesta SET day = ?, ts_local = ? WHERE comida_id = ?",
                         (nuevo_day, ts_local, comida_id))
@@ -4172,7 +4296,12 @@ def comidas_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> list[
     """One entry per MEAL that day (ruling 5): a `comida` row's own children grouped under its own
     description/time, and each legacy comida_id-NULL `ingesta` row standing alone as its own
     one-item meal, keeping its own descripcion/ts_local exactly as before -- ordered the same way
-    `load_day`'s own ingesta list is (COALESCE(ts_local, ''), id), so an untimed meal sorts last."""
+    `load_day`'s own ingesta list is (COALESCE(ts_local, ''), id), so an untimed meal sorts last.
+
+    BODY-COMIDA-PRODUCTO-1: a real meal (`comida_id` present) also carries its own `productos`
+    list -- [{producto_id, nombre, cantidad, unidad}], this person's own language name, empty for
+    a meal that names none and for every legacy standalone-ingesta "meal" (which can never have
+    one -- `comida_producto.comida_id` only ever points at a real `comida` row)."""
     rows = conn.execute(
         "SELECT i.id, i.ts_local, i.descripcion AS ingesta_descripcion, i.metric_key, i.amount, "
         "i.estimado, i.comida_id, c.descripcion AS comida_descripcion, c.ts_local AS comida_ts_local "
@@ -4190,10 +4319,26 @@ def comidas_del_dia(conn: sqlite3.Connection, person_id: int, day: str) -> list[
                 "ts_local": r["comida_ts_local"] if es_comida else r["ts_local"],
                 "descripcion": r["comida_descripcion"] if es_comida else r["ingesta_descripcion"],
                 "cantidades": [],
+                "productos": [],
             }
             orden.append(clave)
         grupos[clave]["cantidades"].append(
             {"metric_key": r["metric_key"], "amount": r["amount"], "estimado": bool(r["estimado"])})
+    comida_ids = [cid for (tipo, cid) in orden if tipo == "comida"]
+    if comida_ids:
+        lang = person(conn, person_id)["language"]
+        placeholders = ",".join("?" * len(comida_ids))
+        for fp in conn.execute(
+            f"SELECT cp.comida_id, cp.producto_id, cp.cantidad, cp.unidad, p.nombre, p.nombre_es, p.nombre_en "
+            f"FROM comida_producto cp JOIN producto p ON p.id = cp.producto_id "
+            f"WHERE cp.comida_id IN ({placeholders}) ORDER BY cp.id", comida_ids,
+        ):
+            nombre = (fp["nombre_en"] or fp["nombre_es"] or fp["nombre"]) if lang == "en" else \
+                (fp["nombre_es"] or fp["nombre_en"] or fp["nombre"])
+            grupos[("comida", fp["comida_id"])]["productos"].append({
+                "producto_id": fp["producto_id"], "nombre": nombre,
+                "cantidad": fp["cantidad"], "unidad": fp["unidad"],
+            })
     return [grupos[c] for c in orden]
 
 

@@ -140,7 +140,7 @@ class NivelDatosEnforcementTest(unittest.TestCase):
             "planear_entreno", "registrar_entreno", "corregir_entreno", "registrar_medida", "marcar_habito",
             "proponer_experimento", "marcar_experimento",
             "registrar_ingesta", "corregir_ingesta", "borrar_ingesta", "registrar_comida",
-            "corregir_comida",
+            "corregir_comida", "buscar_productos", "crear_producto",
             "registrar_checkin",
             "marcar_periodo", "cerrar_periodo", "corregir_periodo", "borrar_periodo",
             "descartar_series", "separar_sesion", "unir_sesiones", "proponer_objetivo_nutriente",

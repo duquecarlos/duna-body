@@ -1258,6 +1258,53 @@ def _seed_ingesta(conn, db, rng: random.Random, all_days: list[date], person_id:
     return rows, comidas
 
 
+# BODY-COMIDA-PRODUCTO-1: 4 invented manual products, each with label nutrition (fuente='etiqueta',
+# the demo's own honest best case -- never 'estimado'), so the picker and the assistant's
+# buscar_productos tool have something real to show on the demo server. One meal (on the EARLIEST
+# seeded day, never the anchor -- BODY-HOY-PENDIENTES-REGISTRO-1 ruling 8 needs the anchor day's
+# own protein_g to stay absent, and this meal's own chicken+rice would otherwise fill it right back
+# in) names the first two, so leer_dia's product lines show there. Figures are plausible but
+# invented, same contract as every other value in this module.
+_PRODUCTOS_DEMO = [
+    # (nombre_es, nombre_en, marca, tamano_neto, tamano_unidad, basis, {metric_key: amount_per})
+    ("Pechuga de pollo", "Chicken breast", "Demo Granja", 500.0, "g", "100g",
+     {"protein_g": 31.0, "kcal": 165.0, "fat_g": 3.6}),
+    ("Arroz blanco", "White rice", "Demo Cocina", 1000.0, "g", "100g",
+     {"carbs_g": 28.0, "kcal": 130.0, "protein_g": 2.7}),
+    ("Yogur griego natural", "Plain Greek yogurt", "Demo Lácteos", 500.0, "g", "100g",
+     {"protein_g": 10.0, "kcal": 97.0, "fat_g": 5.0}),
+    ("Barra de proteína", "Protein bar", "Demo Nutrición", 60.0, "unidad", "unidad",
+     {"protein_g": 20.0, "kcal": 220.0, "carbs_g": 22.0}),
+]
+_COMIDA_PRODUCTO_DEMO_HORA = "13:00:00"
+
+
+def _seed_productos(conn, db, productos_mod, dia: date, person_id: int) -> tuple[int, int]:
+    """Creates `_PRODUCTOS_DEMO` as this person's own manual products with their label nutrition,
+    then one meal on `dia` (the earliest seeded day, never the anchor -- see this module's own
+    comment above `_PRODUCTOS_DEMO`) naming the first two (500g chicken breast, 150g rice) through
+    the SAME `db.crear_comida(..., productos=...)` path the picker and the assistant use -- never a
+    second writer. Returns (productos, comidas)."""
+    ids = []
+    for nombre_es, nombre_en, marca, tamano_neto, tamano_unidad, basis, nutrientes in _PRODUCTOS_DEMO:
+        producto_id = productos_mod.crear_producto_manual(
+            conn, person_id, nombre_es, marca=marca, tamano_neto=tamano_neto, tamano_unidad=tamano_unidad)
+        conn.execute("UPDATE producto SET nombre_es = ?, nombre_en = ? WHERE id = ?",
+                     (nombre_es, nombre_en, producto_id))
+        for metric_key, amount_per in nutrientes.items():
+            productos_mod.establecer_nutricion(conn, producto_id, metric_key, amount_per, basis, "etiqueta")
+        ids.append(producto_id)
+    conn.commit()
+
+    lineas = [{"producto_id": ids[0], "cantidad": 500.0, "unidad": "g"},
+              {"producto_id": ids[1], "cantidad": 150.0, "unidad": "g"}]
+    cantidades, detalle = productos_mod.calcular_lineas(conn, person_id, lineas)
+    ts_local = f"{dia.isoformat()}T{_COMIDA_PRODUCTO_DEMO_HORA}"
+    db.crear_comida(conn, person_id, dia.isoformat(), cantidades, ts_local=ts_local, productos=detalle)
+    conn.commit()
+    return len(ids), 1
+
+
 def _seed_nutriente_objetivo(conn, db, all_days: list[date], person_id: int) -> int:
     """Two invented daily targets (BODY-NUTRIENTE-OBJETIVO-1 ruling 8), live for the whole seeded
     run: protein_g per_kg 1.6 al_menos (a below-target line against this demo's own seeded protein
@@ -1805,6 +1852,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     from . import (baselines, captura_sueno, checkin_sesion, comida_compartida, compartir, db,
                    desplazamiento_import, enlaces, goals, practicas, recuperacion, shift_import, sueno_fc,
                    turno_fc, turnos_costo)
+    from . import productos as productos_mod
 
     person_id = _seed_person(conn, db, idioma)
 
@@ -1820,6 +1868,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
     metric_rows += _seed_soreness(conn, db, rng, all_days, person_id)
     desplazamiento_dias = _seed_desplazamiento(conn, desplazamiento_import, rng, all_days, anchor, person_id)
     entradas_ingesta, comidas_ingesta = _seed_ingesta(conn, db, rng, all_days, person_id)
+    productos_demo, comidas_producto = _seed_productos(conn, db, productos_mod, all_days[0], person_id)
     objetivos_nutriente = _seed_nutriente_objetivo(conn, db, all_days, person_id)
     periodos = _seed_periodo(conn, db, all_days, person_id, idioma)
     # BODY-ENTRENO-VISTA-SESION-1 ruling 6: AFTER _seed_periodo, not before -- see this function's
@@ -1884,6 +1933,7 @@ def _seed(conn, *, dias: int, idioma: str, today: date | None = None) -> dict[st
         "verificaciones_semanales": checks + hogar_checks, "chequeos_habito": habit_checks + hogar_habit_checks,
         "racha_fuerza_sesiones": racha_sesiones,
         "entradas_ingesta": entradas_ingesta, "comidas": comidas_ingesta,
+        "productos": productos_demo, "comidas_con_producto": comidas_producto,
         "metas_nutriente": objetivos_nutriente, "periodos": periodos,
         "checkins": checkins,
         "recuperacion_actividades": recuperacion_rows,
