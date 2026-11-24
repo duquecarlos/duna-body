@@ -355,7 +355,7 @@ class PullDetallePendientesTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX}), \
              mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
              mock.patch("body.pull.db.actividades_sin_detalle", return_value=["a1"]), \
-             mock.patch("body.pull.traer_detalle_actividad", return_value=(3, "tok-after")) as m_traer:
+             mock.patch("body.pull.traer_detalle_actividad", return_value=(3, {}, "tok-after")) as m_traer:
             fetched = pull._pull_detalle_pendientes(
                 self.conn, self.person_id, date(2026, 11, 9), token_str="tok-before")
             self.assertEqual(fetched, 1)
@@ -373,7 +373,10 @@ class PullDetallePendientesTest(unittest.TestCase):
 
 class TraerDetalleActividadTest(unittest.TestCase):
     """pull.py's on-demand traer_detalle_actividad: calls garmin_adapter.fetch_activity_detail
-    and saves each kind actually returned with db.guardar_detalle_actividad."""
+    and saves each kind actually returned with db.guardar_detalle_actividad. BODY-DETALLE-
+    HISTORIA-1 ruling 2 widens the return with a `fallidas` dict ({class name: count} for a kind
+    whose own error was not a 404), in the middle of the tuple so a hosted caller's own
+    `token_after` stays its last element."""
 
     def setUp(self):
         self.conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "traer_detalle.db")
@@ -389,26 +392,188 @@ class TraerDetalleActividadTest(unittest.TestCase):
         data = garmin_adapter.ActivityDetailData(
             activity_id="a1", raw={"detalle": {"v": 1}, "vueltas": {"v": 2}, "zonas": [{"v": 3}]})
         with mock.patch("body.pull.garmin_adapter.fetch_activity_detail", return_value=data) as m:
-            n = pull.traer_detalle_actividad(self.conn, 1, "a1")
+            n, fallidas = pull.traer_detalle_actividad(self.conn, 1, "a1")
         m.assert_called_once_with("a1")
         self.assertEqual(n, 3)
+        self.assertEqual(fallidas, {})
         self.assertTrue(db.detalle_actividad_almacenado(self.conn, 1, "garmin", "a1"))
 
-    def test_a_kind_absent_from_raw_is_not_stored(self):
+    def test_a_transient_errors_kind_is_not_stored_and_is_counted_as_fallida(self):
         data = garmin_adapter.ActivityDetailData(
             activity_id="a1", raw={"vueltas": {}, "zonas": [], "_errors": {"detalle": "RuntimeError"}})
         with mock.patch("body.pull.garmin_adapter.fetch_activity_detail", return_value=data):
-            n = pull.traer_detalle_actividad(self.conn, 1, "a1")
+            n, fallidas = pull.traer_detalle_actividad(self.conn, 1, "a1")
         self.assertEqual(n, 2)
+        self.assertEqual(fallidas, {"RuntimeError": 1})
         self.assertFalse(db.detalle_actividad_almacenado(self.conn, 1, "garmin", "a1"))
 
-    def test_hosted_token_path_returns_the_count_and_the_refreshed_token(self):
+    def test_a_404_kind_is_stored_as_the_empty_marker_and_not_counted_as_fallida(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1-2."""
+        data = garmin_adapter.ActivityDetailData(
+            activity_id="a1",
+            raw={"vueltas": {}, "zonas": [],
+                 "_errors": {"detalle": "GarminConnectNotFoundError"}})
+        with mock.patch("body.pull.garmin_adapter.fetch_activity_detail", return_value=data):
+            n, fallidas = pull.traer_detalle_actividad(self.conn, 1, "a1")
+        self.assertEqual(n, 3)
+        self.assertEqual(fallidas, {})
+        self.assertTrue(db.detalle_actividad_almacenado(self.conn, 1, "garmin", "a1"))
+        stored = self.conn.execute(
+            "SELECT payload FROM activity_detail WHERE person_id = 1 AND activity_source_id = 'a1' "
+            "AND kind = 'detalle'"
+        ).fetchone()
+        self.assertEqual(stored["payload"], "{}")
+
+    def test_hosted_token_path_returns_the_count_fallidas_and_the_refreshed_token(self):
         data = garmin_adapter.ActivityDetailData(activity_id="a1", raw={"detalle": {}, "vueltas": {}, "zonas": []})
         with mock.patch("body.pull.garmin_adapter.fetch_activity_detail",
                          return_value=(data, "tok-after")) as m:
-            n, token_after = pull.traer_detalle_actividad(self.conn, 1, "a1", token_str="tok-before")
+            n, fallidas, token_after = pull.traer_detalle_actividad(self.conn, 1, "a1", token_str="tok-before")
         m.assert_called_once_with("a1", token_str="tok-before")
-        self.assertEqual((n, token_after), (3, "tok-after"))
+        self.assertEqual((n, fallidas, token_after), (3, {}, "tok-after"))
+
+
+class TraerDetalleHistoriaTest(unittest.TestCase):
+    """BODY-DETALLE-HISTORIA-1 ruling 3: the manual, paced, resumable backfill over the WHOLE
+    history, in priority order (basketball, soccer, strength, everything else -- newest first
+    within each group). No network: traer_detalle_actividad is mocked throughout."""
+
+    def setUp(self):
+        self.conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "historia.db")
+        db.init(self.conn)
+        self.addCleanup(self.conn.close)
+        self.person_id = db.local_person_id(self.conn)
+
+    def _insertar(self, source_id, day, tipo, nombre=None):
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'garmin')",
+            (self.person_id, source_id, day, f"{day}T07:00:00", tipo, nombre),
+        )
+        self.conn.commit()
+
+    def test_no_agreement_makes_no_garmin_call(self):
+        self._insertar("a1", "2026-11-01", "running")
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=False), \
+             mock.patch("body.pull.traer_detalle_actividad") as m_traer:
+            resultado = pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=10)
+        m_traer.assert_not_called()
+        self.assertEqual(resultado["detenida_por"], "sin_consentimiento")
+        self.assertEqual(resultado["resueltas"], 0)
+
+    def test_no_pending_activities_returns_immediately(self):
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.traer_detalle_actividad") as m_traer:
+            resultado = pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=10)
+        m_traer.assert_not_called()
+        self.assertEqual(
+            resultado, {"resueltas": 0, "restantes": 0, "fallidas_transitorias": {}, "detenida_por": None}
+        )
+
+    def test_lock_held_refuses_with_counts_only_and_makes_no_call(self):
+        self._insertar("a1", "2026-11-01", "running")
+        held = pull._try_lock()
+        self.addCleanup(pull._unlock, held)
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.LOCK_ESPERA_S", 0.1), \
+             mock.patch("body.pull.LOCK_SONDEO_S", 0.05), \
+             mock.patch("body.pull.traer_detalle_actividad") as m_traer:
+            resultado = pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=10)
+        m_traer.assert_not_called()
+        self.assertEqual(resultado["detenida_por"], "bloqueo")
+        self.assertEqual(resultado["restantes"], 1)
+
+    def test_priority_order_basketball_soccer_strength_rest_newest_first_within_each(self):
+        self._insertar("r2", "2026-11-05", "running")
+        self._insertar("r1", "2026-11-01", "running")
+        self._insertar("s2", "2026-11-06", "strength_training")
+        self._insertar("s1", "2026-11-02", "strength_training")
+        self._insertar("f2", "2026-11-07", "other", "football")
+        self._insertar("f1", "2026-11-03", "other", "futbol")
+        self._insertar("b2", "2026-11-08", "basketball")
+        self._insertar("b1", "2026-11-04", "other", "baloncesto")
+        visitadas = []
+
+        def _traer(c, p, s, token_str=None):
+            visitadas.append(s)
+            return 3, {}, token_str
+
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.traer_detalle_actividad", side_effect=_traer):
+            pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=100, pausa_s=0)
+        self.assertEqual(visitadas, ["b2", "b1", "f2", "f1", "s2", "s1", "r2", "r1"])
+
+    def test_max_cap_limits_how_many_are_resolved(self):
+        for i in range(5):
+            self._insertar(f"a{i}", f"2026-11-0{i + 1}", "running")
+        visitadas = []
+
+        def _traer(c, p, s, token_str=None):
+            visitadas.append(s)
+            return 3, {}, token_str
+
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.traer_detalle_actividad", side_effect=_traer):
+            resultado = pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=2, pausa_s=0)
+        self.assertEqual(len(visitadas), 2)
+        self.assertEqual(resultado["resueltas"], 2)
+        self.assertEqual(resultado["restantes"], 3)
+
+    def test_pause_is_called_between_activities_but_not_before_the_first(self):
+        self._insertar("a2", "2026-11-02", "running")
+        self._insertar("a1", "2026-11-01", "running")
+        sleeps = []
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.traer_detalle_actividad", return_value=(3, {}, "tok")), \
+             mock.patch("body.pull.time.sleep", side_effect=sleeps.append):
+            pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=10, pausa_s=0.75)
+        self.assertEqual(sleeps, [0.75])
+
+    def test_stops_at_the_first_transient_failure_with_counts_so_far(self):
+        self._insertar("a2", "2026-11-02", "running")
+        self._insertar("a1", "2026-11-01", "running")
+        calls = []
+
+        def _traer(c, p, s, token_str=None):
+            calls.append(s)
+            if s == "a2":
+                return 3, {}, token_str
+            return 0, {"GarminConnectTooManyRequestsError": 1}, token_str
+
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.traer_detalle_actividad", side_effect=_traer):
+            resultado = pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=10, pausa_s=0)
+        self.assertEqual(calls, ["a2", "a1"])
+        self.assertEqual(resultado["resueltas"], 1)
+        self.assertEqual(resultado["detenida_por"], "transitorio")
+        self.assertEqual(resultado["fallidas_transitorias"], {"GarminConnectTooManyRequestsError": 1})
+        self.assertEqual(resultado["restantes"], 1)
+
+    def test_stops_on_not_signed_in(self):
+        self._insertar("a1", "2026-11-01", "running")
+        with mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.traer_detalle_actividad",
+                         side_effect=garmin_adapter.NotSignedIn("token rejected")):
+            resultado = pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok", max_actividades=10, pausa_s=0)
+        self.assertEqual(resultado["detenida_por"], "sin_firma")
+        self.assertEqual(resultado["resueltas"], 0)
+
+    def test_token_persisted_when_refreshed(self):
+        self._insertar("a1", "2026-11-01", "running")
+        with mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX}), \
+             mock.patch("body.pull.privacidad.guarda_detalle", return_value=True), \
+             mock.patch("body.pull.traer_detalle_actividad", return_value=(3, {}, "tok-after")):
+            pull.traer_detalle_historia(
+                self.conn, self.person_id, token_str="tok-before", max_actividades=10, pausa_s=0)
+            self.assertEqual(garmin_cuenta.leer(self.conn, self.person_id), "tok-after")
 
 
 class ActualizarIntradiaSiCorrespondeTest(unittest.TestCase):

@@ -9,6 +9,10 @@
 # personas -- same data user, same BODY_HOME. relinkar-garmin --apply runs the EXISTING off-host
 # backup (body-backup.sh, not this script's own local rollback snapshot) first and refuses to run
 # the move at all if that backup fails.
+#
+# detalle-historia (BODY-DETALLE-HISTORIA-1) is also dispatched here: the manual, paced backfill
+# over one person's whole activity-detail history, forwarded to body.detalle_historia -- same
+# data user, same BODY_HOME, same shape as cobertura's own arm.
 set -Eeuo pipefail
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -24,7 +28,7 @@ DATA_USER="duna-body"
 DATA_DIR="/srv/duna/data/body"
 
 if [[ $# -lt 1 ]]; then
-  echo "body-import-pc.sh: usage: body-import-pc.sh <importar-pc|personas|diagnostico-personas|cobertura|relinkar-garmin> [options]" >&2
+  echo "body-import-pc.sh: usage: body-import-pc.sh <importar-pc|personas|diagnostico-personas|cobertura|detalle-historia|relinkar-garmin> [options]" >&2
   exit 2
 fi
 
@@ -85,6 +89,44 @@ case "$action" in
     fi
     exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
       "$REPO_DIR/.venv/bin/python" -m body.cobertura --cuenta-sub "$COBERTURA_SUB"
+    ;;
+  detalle-historia)
+    DETALLE_HISTORIA_SUB=""
+    DETALLE_HISTORIA_DRY_RUN=""
+    DETALLE_HISTORIA_MAX=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --cuenta-sub)
+          DETALLE_HISTORIA_SUB="$2"
+          shift 2
+          ;;
+        --dry-run)
+          DETALLE_HISTORIA_DRY_RUN="1"
+          shift
+          ;;
+        --max)
+          DETALLE_HISTORIA_MAX="$2"
+          shift 2
+          ;;
+        *)
+          echo "body-import-pc.sh: unknown argument: $1" >&2
+          exit 2
+          ;;
+      esac
+    done
+    if [[ -z "$DETALLE_HISTORIA_SUB" ]]; then
+      echo "body-import-pc.sh: detalle-historia requires --cuenta-sub" >&2
+      exit 2
+    fi
+    DETALLE_HISTORIA_ARGS=(--cuenta-sub "$DETALLE_HISTORIA_SUB")
+    if [[ -n "$DETALLE_HISTORIA_DRY_RUN" ]]; then
+      DETALLE_HISTORIA_ARGS+=(--dry-run)
+    fi
+    if [[ -n "$DETALLE_HISTORIA_MAX" ]]; then
+      DETALLE_HISTORIA_ARGS+=(--max "$DETALLE_HISTORIA_MAX")
+    fi
+    exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+      "$REPO_DIR/.venv/bin/python" -m body.detalle_historia "${DETALLE_HISTORIA_ARGS[@]}"
     ;;
   importar-pc)
     ;;

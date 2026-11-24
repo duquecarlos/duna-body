@@ -36,6 +36,10 @@ class UsageTest(unittest.TestCase):
         """BODY-HISTORIA-MINUTO-2, ruling 2."""
         self.assertIn("cobertura --cuenta-sub <sub> [--json]", self.text)
 
+    def test_usage_lists_detalle_historia(self):
+        """BODY-DETALLE-HISTORIA-1, ruling 5."""
+        self.assertIn("detalle-historia --cuenta-sub <sub> [--dry-run] [--max N]", self.text)
+
     def test_usage_lists_personas_conteo(self):
         """BODY-HISTORIA-MINUTO-2, ruling 3."""
         self.assertIn("--conteo", self.text)
@@ -88,6 +92,21 @@ class CaseArmsTest(unittest.TestCase):
         """BODY-HISTORIA-MINUTO-2, ruling 2."""
         self.assertRegex(self.text, r"\n\s*cobertura\)\n")
 
+    def test_detalle_historia_case_present_and_validates_max_in_range(self):
+        """BODY-DETALLE-HISTORIA-1, ruling 5."""
+        self.assertRegex(self.text, r"\n\s*detalle-historia\)\n")
+        start = self.text.index("\n  detalle-historia)")
+        end = self.text.index(";;", start)
+        body = self.text[start:end]
+        self.assertIn("--max", body)
+        self.assertIn("^[0-9]+$", body)
+        self.assertIn("exit 2", body)
+        self.assertIn("between 1 and 200", body)
+        # "$@" is read with a for loop, never consumed with a `shift` builtin, so it still
+        # reaches the exec dispatch below intact (the same relinkar-garmin convention).
+        self.assertNotIn("shift 2", body)
+        self.assertNotRegex(body, r"\bshift\b\s*\n")
+
     def test_personas_case_still_rejects_other_arguments_but_now_accepts_conteo(self):
         """BODY-HISTORIA-MINUTO-2, ruling 3."""
         start = self.text.index("\n  personas)")
@@ -132,6 +151,10 @@ class ExecDispatchTest(unittest.TestCase):
         """BODY-HISTORIA-MINUTO-2, ruling 2."""
         self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" cobertura "$@"', self.text)
 
+    def test_detalle_historia_execs_with_forwarded_args(self):
+        """BODY-DETALLE-HISTORIA-1, ruling 5."""
+        self.assertIn('exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" detalle-historia "$@"', self.text)
+
 
 class SudoersUnchangedTest(unittest.TestCase):
     def test_sudoers_still_allows_the_whole_script_not_per_verb(self):
@@ -146,6 +169,7 @@ class SudoersUnchangedTest(unittest.TestCase):
         self.assertNotIn("diagnostico-personas", text)
         self.assertNotIn("relinkar-garmin", text)
         self.assertNotIn("cobertura", text)
+        self.assertNotIn("detalle-historia", text)
 
 
 class ReadmeImportSectionTest(unittest.TestCase):

@@ -51,8 +51,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import (config, cuenta, db, errores, experimentos, fechas, garmin_adapter, garmin_cuenta, goals, lugares,
-               privacidad, readiness, recuperacion, sueno_fc, turno_fc)
+from . import (config, cuenta, db, entreno_sesion, errores, experimentos, fechas, garmin_adapter, garmin_cuenta,
+               goals, lugares, privacidad, readiness, recuperacion, sueno_fc, turno_fc)
 
 PAUSE_S = 1.0  # be gentle with Garmin's servers during a backfill
 EMPTY_STOP = 60  # --all stops after this many consecutive days with no watch data
@@ -1241,23 +1241,43 @@ def traer_detalle_actividad(conn, person_id: int, source_id: str, token_str: str
     """Pulls one activity's full detail through the adapter only (garmin_adapter.fetch_activity_
     detail) and stores each kind that call actually returned (db.guardar_detalle_actividad) --
     'detalle'/'vueltas'/'zonas', matching ActivityDetailData.raw's own keys. A kind whose own
-    Garmin call failed is simply absent from raw and is not stored this run (left for a later
-    run's db.actividades_sin_detalle to pick up again), the same `_errors` pattern fetch_intraday
-    already uses -- one failing call never loses the other two. Returns the number of kinds
-    stored (0-3), or (that count, token_after) when token_str is given (hosted, per-person token
-    path, the same dual-return shape fetch_activity_detail/traer_series use."""
+    Garmin call failed (present in raw['_errors'] instead) is told apart by its error class name
+    (garmin_adapter.detalle_no_disponible, ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1-2): a 404
+    (Garmin genuinely has nothing) is stored as the existing empty marker (db.guardar_detalle_
+    actividad(..., kind, {}), db.py:472-473's convention) so it counts as stored and is never
+    re-asked for; any other class (429, a 5xx, a timeout, or an unrecognised class) is left
+    unstored, same as before this ruling, and its class name is counted into `fallidas` --
+    {class name: count} across the (at most 3) kinds that stayed unresolved this call, the
+    `_fallos_de_dia` shape -- so the caller can tell a transient failure apart from a genuine
+    404, the same `_errors` pattern fetch_intraday already uses: one failing call never loses the
+    other two. Returns (stored, fallidas) -- stored the number of kinds now resolved (0-3,
+    counting a 404 marker as resolved) -- or (stored, fallidas, token_after) when token_str is
+    given (hosted, per-person token path, the same dual-return shape fetch_activity_detail/
+    traer_series use, extended with `fallidas` in the middle so every existing caller's own
+    `token_after`/last-position unpacking stays where it was)."""
     if token_str is not None:
         data, token_after = garmin_adapter.fetch_activity_detail(source_id, token_str=token_str)
     else:
         data = garmin_adapter.fetch_activity_detail(source_id)
+    errores_por_kind = data.raw.get("_errors") or {}
     stored = 0
+    fallidas: dict[str, int] = {}
     for kind in db.DETALLE_KINDS:
         if kind in data.raw:
             db.guardar_detalle_actividad(conn, person_id, garmin_adapter.SOURCE, source_id, kind, data.raw[kind])
             stored += 1
+            continue
+        nombre_error = errores_por_kind.get(kind)
+        if nombre_error is None:
+            continue
+        if garmin_adapter.detalle_no_disponible(nombre_error):
+            db.guardar_detalle_actividad(conn, person_id, garmin_adapter.SOURCE, source_id, kind, {})
+            stored += 1
+        else:
+            fallidas[nombre_error] = fallidas.get(nombre_error, 0) + 1
     if token_str is not None:
-        return stored, token_after
-    return stored
+        return stored, fallidas, token_after
+    return stored, fallidas
 
 
 def _pull_detalle_pendientes(conn, person_id: int, hoy: date, token_str: str | None = None) -> int:
@@ -1284,7 +1304,7 @@ def _pull_detalle_pendientes(conn, person_id: int, hoy: date, token_str: str | N
     for source_id in actividades:
         try:
             if token is not None:
-                _, token = traer_detalle_actividad(conn, person_id, source_id, token_str=token)
+                _, _, token = traer_detalle_actividad(conn, person_id, source_id, token_str=token)
             else:
                 traer_detalle_actividad(conn, person_id, source_id)
             fetched += 1
@@ -1294,6 +1314,159 @@ def _pull_detalle_pendientes(conn, person_id: int, hoy: date, token_str: str | N
         garmin_cuenta.guardar(conn, person_id, token)
     print(f"detalle: {fetched} actividades traídas, {len(pendientes) - fetched} pendientes", flush=True)
     return fetched
+
+
+# BODY-DETALLE-HISTORIA-1 ruling 3: the manual backfill's own priority order, kept as DATA in the
+# checkin_sesion._CONJUNTOS shape -- a non-generic type matches by its CODE alone ('tipos'),
+# Garmin's generic 'other' bucket matches by the folded name instead ('nombres_other',
+# entreno_sesion._normaliza_nombre). Checked in order; an activity matching none of these three
+# falls into the last, catch-all group ("otro"). GRUPOS_PRIORIDAD_HISTORIA_NOMBRES names each
+# group (plus "otro") in the same order, for anything printing the group a source_id landed in
+# without re-deriving it.
+_PRIORIDAD_HISTORIA: tuple[dict, ...] = (
+    {"tipos": frozenset({"basketball"}),
+     "nombres_other": frozenset({"basketball", "baloncesto", "basquetbol"})},
+    {"tipos": frozenset(), "nombres_other": frozenset({"futbol", "football", "soccer"})},
+    {"tipos": frozenset({"strength_training"}), "nombres_other": frozenset()},
+)
+
+GRUPOS_PRIORIDAD_HISTORIA_NOMBRES = ("basketball", "soccer", "strength", "otro")
+
+
+def _grupo_prioridad_historia(tipo: str | None, nombre: str | None) -> int:
+    """The index into _PRIORIDAD_HISTORIA (or len(_PRIORIDAD_HISTORIA) for the catch-all "otro"
+    group) this activity's own (type, name) matches -- the same two-step match set_para's own
+    loop uses (checkin_sesion.py), never a copy of its logic re-derived here."""
+    nombre_norm = entreno_sesion._normaliza_nombre(nombre)
+    for i, c in enumerate(_PRIORIDAD_HISTORIA):
+        if tipo in c["tipos"]:
+            return i
+        if tipo == entreno_sesion.TIPO_GENERICO and nombre_norm in c["nombres_other"]:
+            return i
+    return len(_PRIORIDAD_HISTORIA)
+
+
+def _tipos_nombres_de(conn, person_id: int, source_ids: list[str]) -> dict[str, tuple[str | None, str | None]]:
+    """This person's own (type, name) for each of `source_ids` -- a direct read of `activity`
+    (the same direct-SQL style body.cobertura._actividades_con_detalle already uses over this
+    same table; db.actividades_sin_detalle itself returns source_ids only, with no column to add
+    without a db.py change this slice does not make)."""
+    if not source_ids:
+        return {}
+    marcadores = ",".join("?" for _ in source_ids)
+    filas = conn.execute(
+        f"SELECT source_id, type, name FROM activity WHERE person_id = ? AND source = ? "
+        f"AND source_id IN ({marcadores})",
+        (person_id, garmin_adapter.SOURCE, *source_ids),
+    ).fetchall()
+    return {f["source_id"]: (f["type"], f["name"]) for f in filas}
+
+
+def _ordenar_prioridad_historia(conn, person_id: int, pendientes: list[str]) -> list[str]:
+    """`pendientes` (db.actividades_sin_detalle's own newest-day-first order), regrouped by
+    _PRIORIDAD_HISTORIA while keeping each group's own relative order -- which, since the input
+    was already newest first overall, is already newest first within each group too, with no
+    second sort needed."""
+    tipos_nombres = _tipos_nombres_de(conn, person_id, pendientes)
+    grupos: list[list[str]] = [[] for _ in range(len(_PRIORIDAD_HISTORIA) + 1)]
+    for source_id in pendientes:
+        tipo, nombre = tipos_nombres.get(source_id, (None, None))
+        grupos[_grupo_prioridad_historia(tipo, nombre)].append(source_id)
+    return [source_id for grupo in grupos for source_id in grupo]
+
+
+# ORCH-CARLOS-DELEGATES-TIER-1-1: the earliest possible ISO date, passed to db.actividades_sin_
+# detalle so it selects with no day floor at all -- the whole history, never only DETALLE_ALCANCE_
+# DIAS back (the scheduled path's own, narrower window). No db.py change: actividades_sin_detalle
+# already takes `desde_dia` as a plain string compared with SQL >=, so any date before every real
+# activity day serves as "no floor".
+FECHA_MINIMA_HISTORIA = "0001-01-01"
+
+
+def traer_detalle_historia(
+    conn, person_id: int, *, token_str: str, max_actividades: int, pausa_s: float = PAUSE_S,
+) -> dict:
+    """BODY-DETALLE-HISTORIA-1 ruling 3: the manual, paced, resumable backfill over this person's
+    WHOLE activity history (db.actividades_sin_detalle with FECHA_MINIMA_HISTORIA, no day floor),
+    newest first within _PRIORIDAD_HISTORIA's own priority groups (_ordenar_prioridad_historia).
+    Always the hosted per-person token path -- garmin_cuenta.leer/guardar for the token, never the
+    local TOKEN_DIR shortcut -- and only through traer_detalle_actividad, so a 404 still lands the
+    SAME empty marker a scheduled pull would store (ruling 2) and this run is resumable with no
+    marker of its own: a re-run simply sees fewer db.actividades_sin_detalle candidates.
+
+    Gated the same way the scheduled path is (privacidad.guarda_detalle): not consented makes NO
+    Garmin call at all and returns with detenida_por='sin_consentimiento'. Holds the same pull
+    lock the daily/backfill timers use, waiting for it exactly as the daily pull does
+    (_esperar_lock(LOCK_ESPERA_S)) so this never runs beside a scheduled pull; still held after
+    that wait refuses outright (detenida_por='bloqueo'), no Garmin call either.
+
+    Sleeps `pausa_s` between activities (none before the first) and stops once `max_actividades`
+    have been resolved. Stops at the FIRST transient failure (an exception raised straight out of
+    `_client()` such as a 429/5xx/connection error -- never caught inside traer_detalle_actividad
+    itself, since that only catches the three per-kind Garmin calls -- or a non-empty `fallidas`
+    from traer_detalle_actividad, i.e. a kind whose own error was not a 404) or `garmin_adapter.
+    NotSignedIn`, recording it through the EXISTING `_registrar_intento_persona` (reusing
+    `FeedsFallidos` purely as `_estado_http_de_fallos`'s own {class name: count} carrier, so the
+    backoff this sets is the exact SAME one a scheduled pull's own feed failures would set --
+    one account, one backoff) before returning.
+
+    Returns {'resueltas': activities fully resolved this run, 'restantes': still-pending
+    activities after this run (across the WHOLE history, not just this run's own selection),
+    'fallidas_transitorias': {class name: count} for the one activity that stopped this run (empty
+    when it did not stop early), 'detenida_por': the stop reason, or None when every selected
+    activity (up to `max_actividades`, or fewer when fewer were pending) resolved cleanly} --
+    counts and class names only, never a source_id or an activity name."""
+    if not privacidad.guarda_detalle(conn, person_id):
+        print("detalle historia: sin consentimiento; no se hizo ninguna llamada a Garmin", flush=True)
+        return {"resueltas": 0, "restantes": 0, "fallidas_transitorias": {}, "detenida_por": "sin_consentimiento"}
+
+    pendientes_todas = db.actividades_sin_detalle(conn, person_id, FECHA_MINIMA_HISTORIA)
+    if not pendientes_todas:
+        return {"resueltas": 0, "restantes": 0, "fallidas_transitorias": {}, "detenida_por": None}
+
+    lock = _esperar_lock(LOCK_ESPERA_S)
+    if lock is None:
+        print("detalle historia: otro pull está en curso; nada se hizo esta corrida", flush=True)
+        return {"resueltas": 0, "restantes": len(pendientes_todas), "fallidas_transitorias": {},
+                "detenida_por": "bloqueo"}
+
+    token = token_before = token_str
+    try:
+        seleccion = _ordenar_prioridad_historia(conn, person_id, pendientes_todas)[:max_actividades]
+        resueltas = 0
+        fallidas_transitorias: dict[str, int] = {}
+        detenida_por = None
+        ahora = datetime.now(timezone.utc)
+        for i, source_id in enumerate(seleccion):
+            if i:
+                time.sleep(pausa_s)
+            try:
+                _, fallidas, token = traer_detalle_actividad(conn, person_id, source_id, token_str=token)
+            except garmin_adapter.NotSignedIn as e:
+                _registrar_intento_persona(conn, person_id, ahora, e)
+                detenida_por = "sin_firma"
+                break
+            except Exception as e:
+                _registrar_intento_persona(conn, person_id, ahora, e)
+                fallidas_transitorias = {type(e).__name__: 1}
+                detenida_por = "transitorio"
+                break
+            if fallidas:
+                _registrar_intento_persona(conn, person_id, ahora, FeedsFallidos(fallidas))
+                fallidas_transitorias = fallidas
+                detenida_por = "transitorio"
+                break
+            resueltas += 1
+        return {
+            "resueltas": resueltas,
+            "restantes": len(pendientes_todas) - resueltas,
+            "fallidas_transitorias": fallidas_transitorias,
+            "detenida_por": detenida_por,
+        }
+    finally:
+        if token != token_before:
+            garmin_cuenta.guardar(conn, person_id, token)
+        _unlock(lock)
 
 
 def traer_intradia_rango(conn, person_id: int, desde: date, hasta: date, pausa_s: float = 1.0) -> tuple[int, int, int]:

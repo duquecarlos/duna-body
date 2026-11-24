@@ -230,6 +230,22 @@ def estado_http(exc: BaseException) -> int | None:
     return None
 
 
+def detalle_no_disponible(nombre_error: str) -> bool:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: True when `nombre_error` (an exception class
+    NAME only, never the instance -- the same by-name convention _estado_http_de_fallos already
+    reads fetch_day's own `_errors` values as) is garminconnect's 404 class: Garmin genuinely has
+    nothing for that activity/kind, told apart ONCE from a transient failure (429, a 5xx, a
+    timeout, or any other class) so the caller can store the empty marker instead of asking again
+    forever. Compared against GarminConnectNotFoundError.__name__ alone -- never a second,
+    hand-typed literal -- so this still matches if that class is ever renamed. Nothing else in
+    this module names GarminConnectNotFoundError; it subclasses GarminConnectConnectionError
+    (backwards compatible with an `except GarminConnectConnectionError` reader), so it was never
+    told apart from a genuine connection failure before this helper existed."""
+    from garminconnect.exceptions import GarminConnectNotFoundError
+
+    return nombre_error == GarminConnectNotFoundError.__name__
+
+
 def _parse_device_last_sync(raw: Any) -> datetime | None:
     """Parses one get_device_last_used() response (api/devices.py:75-80, "the device that
     synced last") into a UTC datetime, or None for anything this function cannot read.

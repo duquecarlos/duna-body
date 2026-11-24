@@ -4,6 +4,7 @@
 #   sudo -n /usr/local/sbin/duna-deploy-body <status|deploy [--dry-run]|pull|backup [--dry-run]|
 #     importar-pc --cuenta-sub <sub> --archivo <path> [--apply]|personas|
 #     diagnostico-personas|cobertura --cuenta-sub <sub> [--json]|
+#     detalle-historia --cuenta-sub <sub> [--dry-run] [--max N]|
 #     relinkar-garmin --desde <id> --hacia <id> [--apply]|rollback-script>
 set -Eeuo pipefail
 
@@ -41,6 +42,12 @@ usage: duna-deploy-body <command>
   cobertura --cuenta-sub <sub> [--json]
                       read-only: what is actually stored for one person's minute-by-minute
                       history -- counts and dates only, never a health figure
+  detalle-historia --cuenta-sub <sub> [--dry-run] [--max N]
+                      manual, paced backfill of full activity detail (heart-rate curve, laps,
+                      zones) over this person's WHOLE Garmin history, priority order first;
+                      --dry-run prints the before table only, no Garmin call; --max caps
+                      activities fetched this run (1-200, default 20) -- counts, group names
+                      and months only, never a health figure
   relinkar-garmin --desde <id> --hacia <id> [--apply]
                       move one person's hosted Garmin connection and data to another
                       (dry run by default); --apply takes a host backup first and is
@@ -198,6 +205,30 @@ case "$cmd" in
   cobertura)
     # body-import-pc.sh itself validates --cuenta-sub and --json.
     ;;
+  detalle-historia)
+    # body-import-pc.sh itself validates --cuenta-sub and --dry-run. --max is range-checked here,
+    # in bash, before body-import-pc.sh ever sees it (relinkar-garmin's own --desde/--hacia check,
+    # same shape) -- "$@" itself is read, never shifted, so it still reaches the exec below
+    # untouched.
+    detalle_historia_max=""
+    detalle_historia_prev=""
+    for detalle_historia_arg in "$@"; do
+      if [[ "$detalle_historia_prev" == "--max" ]]; then
+        detalle_historia_max="$detalle_historia_arg"
+      fi
+      detalle_historia_prev="$detalle_historia_arg"
+    done
+    if [[ -n "$detalle_historia_max" ]]; then
+      if [[ ! "$detalle_historia_max" =~ ^[0-9]+$ ]]; then
+        echo "duna-deploy-body: detalle-historia: --max must be an integer between 1 and 200" >&2
+        exit 2
+      fi
+      if (( detalle_historia_max < 1 || detalle_historia_max > 200 )); then
+        echo "duna-deploy-body: detalle-historia: --max must be an integer between 1 and 200" >&2
+        exit 2
+      fi
+    fi
+    ;;
   relinkar-garmin)
     # Validated here, in bash, before body-import-pc.sh ever sees them (like body-deploy.sh's
     # own sha-shape check) -- "$@" itself is read, never shifted, so it still reaches the exec
@@ -267,6 +298,10 @@ fi
 
 if [[ "$cmd" == "cobertura" ]]; then
   exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" cobertura "$@"
+fi
+
+if [[ "$cmd" == "detalle-historia" ]]; then
+  exec /bin/bash "$PRODUCT_IMPORT_SCRIPT" detalle-historia "$@"
 fi
 
 if [[ "$cmd" == "relinkar-garmin" ]]; then
