@@ -49,10 +49,33 @@ class TableSpec:
     self_ref_cols: tuple[str, ...] = ()  # columns holding an id of THIS SAME table (goal.horizonte_goal_id,
     # horizonte_meta_semanal.reemplaza_id): excluded from matching, inserted NULL, then resolved in a
     # second pass from the table's own id map once every row is migrated.
+    # BODY-COMIDA-PRODUCTO-1-D: `producto` only. The generic scope="person"/"parent" shape has no
+    # way to say "my own rows, plus a parent-less row one of my children points at" -- a household
+    # pantry mirror (person_id NULL) that this person's own comida_producto lines name must still
+    # move, so no meal line loses its product, even though the mirror itself is not this person's
+    # row (BODY-COMIDA-PRODUCTO-2-DESPENSA rebuilds the mirror from Hogar directly). Rather than
+    # widen the dataclass's own scope vocabulary for one table, this one extra query is bolted on:
+    # called with (source_conn, source_person_id), returns the extra rows to migrate alongside the
+    # normal scope="person" selection.
+    extra_rows_fn: Callable[[sqlite3.Connection, int], list] | None = None
 
 
 def _hogar_filter(row: dict) -> bool:
     return row.get("hogar_id") is not None
+
+
+def _producto_rows_alcanzados_por_comida(conn: sqlite3.Connection, person_id: int) -> list[sqlite3.Row]:
+    """BODY-COMIDA-PRODUCTO-1-D: every household pantry mirror row (`person_id IS NULL`) that one
+    of this person's OWN `comida_producto` lines names. Hogar is that row's real source and
+    BODY-COMIDA-PRODUCTO-2-DESPENSA rebuilds it there -- this is not "the mirror moves with the
+    person", only "a meal that already names it does not lose its product when the person moves"."""
+    return conn.execute(
+        "SELECT DISTINCT pr.* FROM producto pr "
+        "JOIN comida_producto cp ON cp.producto_id = pr.id "
+        "JOIN comida c ON c.id = cp.comida_id "
+        "WHERE c.person_id = ? AND pr.person_id IS NULL",
+        (person_id,),
+    ).fetchall()
 
 
 # Catalogs, sessions, tokens and devices -- never copied (ruling 2). hogar_miembro is this
@@ -198,6 +221,29 @@ REGISTRY: tuple[TableSpec, ...] = (
               fk_table={"experimento_id": "experimento", "momento_id": "moment"}),
     TableSpec("comida", match_cols=None, id_exported=True),
     TableSpec("ingesta", match_cols=None, fk_remap=("comida_id",), fk_table={"comida_id": "comida"}),
+    # BODY-COMIDA-PRODUCTO-1-D: a person's own products and the product lines of their meals are
+    # their own data -- placed after comida/ingesta (their id maps are not needed, but comida's own
+    # id map IS, for comida_producto's own fk_remap below) so producto's own id map exists before
+    # comida_producto needs to remap through it.
+    # `producto` CORRECTED ownership (ORCH-CARLOS-DELEGATES-TIER-1-1): exactly one of person_id/
+    # hogar_id is set. scope="person" selects every row with THIS person's own person_id (a manual
+    # product), the normal per-person set -- a household pantry mirror (person_id NULL) is never
+    # swept in by that query alone, the same way goal/plan's own hogar-shared rows are never swept
+    # in by other_person_filter=_hogar_filter (ruling 5's "visibility only" choice), except here the
+    # exclusion is structural (the WHERE clause itself) rather than a post-hoc filter. extra_rows_fn
+    # then adds back in exactly the mirror rows this person's own meals reach, so no meal line loses
+    # its product -- never a blanket migration of someone else's whole pantry.
+    TableSpec("producto", match_cols=None, id_exported=True,
+              extra_rows_fn=_producto_rows_alcanzados_por_comida),
+    TableSpec("producto_nutricion", scope="parent", parent_fk="producto_id", parent_table="producto",
+              match_cols=("producto_id", "metric_key"), fk_remap=("producto_id",),
+              fk_table={"producto_id": "producto"}),
+    # A household mirror product's own nutrition rows are not reached here (parent_source_ids
+    # ["producto"] below only covers this person's own manual products) -- BODY-COMIDA-PRODUCTO-2-
+    # DESPENSA rebuilds the mirror, and its nutrition, from Hogar directly, so this is not a gap.
+    TableSpec("comida_producto", scope="parent", parent_fk="comida_id", parent_table="comida",
+              match_cols=None, fk_remap=("comida_id", "producto_id"),
+              fk_table={"comida_id": "comida", "producto_id": "producto"}),
     TableSpec("period", match_cols=None),
     TableSpec("nutrient_target", match_cols=("person_id", "metric_key", "start_day")),
     TableSpec("fuente_importacion", match_cols=("person_id", "fuente")),
@@ -217,10 +263,11 @@ REGISTRY: tuple[TableSpec, ...] = (
 
 REGISTRY_BY_NAME = {spec.name: spec for spec in REGISTRY}
 
-# habit, goal_enlace and shift_batch_item carry no literal `person_id` column (the same exception
-# body/privacidad.py's own person_tables() documents) -- they are still in REGISTRY, scoped through
-# their parent instead.
-_NO_PERSON_ID_COLUMN = {"habit", "goal_enlace", "shift_batch_item", "set_pregunta_item"}
+# habit, goal_enlace, shift_batch_item, set_pregunta_item, producto_nutricion and comida_producto
+# carry no literal `person_id` column (the same exception body/privacidad.py's own person_tables()
+# documents) -- they are still in REGISTRY, scoped through their parent instead.
+_NO_PERSON_ID_COLUMN = {"habit", "goal_enlace", "shift_batch_item", "set_pregunta_item",
+                        "producto_nutricion", "comida_producto"}
 
 
 @dataclass
@@ -309,7 +356,10 @@ def _remap_row(row: sqlite3.Row, spec: TableSpec, id_maps: dict, source_person_i
     was not actually inserted, so this row cannot be matched against the destination yet and is
     simply counted as an insert."""
     out = dict(row)
-    if spec.scope == "person" and "person_id" in out:
+    # BODY-COMIDA-PRODUCTO-1-D: `producto`'s own hogar-mirror rows (person_id already NULL) are
+    # never force-set to dest_person_id -- every OTHER scope="person" table's person_id is NOT NULL
+    # by schema, so this guard changes nothing for them.
+    if spec.scope == "person" and "person_id" in out and out["person_id"] is not None:
         out["person_id"] = dest_person_id
     for col in spec.self_ref_cols:
         out[col] = None
@@ -343,9 +393,14 @@ def _source_rows(source_conn: sqlite3.Connection, spec: TableSpec, source_person
                   parent_source_ids: dict) -> list[sqlite3.Row]:
     order = " ORDER BY id" if _has_id_column(source_conn, spec.name) else ""
     if spec.scope == "person":
-        return source_conn.execute(
+        rows = source_conn.execute(
             f'SELECT * FROM "{spec.name}" WHERE person_id = ?{order}', (source_person_id,)
         ).fetchall()
+        if spec.extra_rows_fn is not None:
+            extra = spec.extra_rows_fn(source_conn, source_person_id)
+            seen = {r["id"] for r in rows}
+            rows = rows + [r for r in extra if r["id"] not in seen]
+        return rows
     ids = parent_source_ids.get(spec.parent_table, set())
     if not ids:
         return []
@@ -382,6 +437,14 @@ def _build_parent_ids(conn: sqlite3.Connection, person_id: int) -> dict:
         # BODY-PARTIDO-2: set_pregunta_item's own parent table.
         "set_pregunta": {r[0] for r in conn.execute(
             "SELECT id FROM set_pregunta WHERE person_id = ?", (person_id,))},
+        # BODY-COMIDA-PRODUCTO-1-D: comida_producto's own parent table (comida_id -> comida).
+        "comida": {r[0] for r in conn.execute(
+            "SELECT id FROM comida WHERE person_id = ?", (person_id,))},
+        # BODY-COMIDA-PRODUCTO-1-D: producto_nutricion's own parent table -- this person's own
+        # manual products only (a mirror product's own nutrition is not reached here; see the
+        # comment on the comida_producto TableSpec above).
+        "producto": {r[0] for r in conn.execute(
+            "SELECT id FROM producto WHERE person_id = ?", (person_id,))},
     }
 
 

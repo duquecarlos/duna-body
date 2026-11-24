@@ -154,8 +154,18 @@ client = TestClient(web.app, follow_redirects=False)
 # ceiling unchanged. `planear_entreno`'s own cost (rulings 1-2, the same slice) is named
 # separately in this file's own PlanearEntrenoReentradaCostTest below, since it is a tool call,
 # never a GET route, and so cannot sit in this table.
+# BODY-COMIDA-PRODUCTO-1-D: /comida/productos and /comida/productos/agregar, new with this slice
+# (BODY-COMIDA-PRODUCTO-1's own picker). Measured on this file's own fixture (demo._seed(dias=30),
+# which now also seeds a few manual products and one meal naming two of them, BODY-COMIDA-
+# PRODUCTO-1 ruling 7): /comida/productos measured 22 statements (productos_visibles plus
+# basis_de_producto per product, the picker's own search-free listing), ceil(22 * 1.3) = 29.
+# /comida/productos/agregar measured 13 (the sweep's own no-params call: the early-return path,
+# productos_visibles's own one-read visibility check, no product actually added), ceil(13 * 1.3) =
+# 17. Both well under _MAX_CONNECTIONS (2 measured for each).
 _CEILINGS = {
     "/": 155,
+    "/comida/productos": 29,
+    "/comida/productos/agregar": 17,
     "/ajustes/asistente": 16,
     "/ajustes/dispositivos": 9,
     "/api/asistente/mcp/herramientas": 3,
