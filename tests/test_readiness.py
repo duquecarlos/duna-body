@@ -57,6 +57,18 @@ class ReadinessTest(unittest.TestCase):
         r = readiness.compute(conn, last, 1)
         self.assertIsNone(r.score)  # only sleep + battery available; honest "not yet"
 
+    def test_part_day_is_yesterday_for_stress_else_the_score_day(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: each part says which day its `value` came
+        from -- the stress part reads yesterday's (full-day) stress_avg on purpose, so its `day`
+        is the day before; every other part reads the score's own day."""
+        conn, last = make_db(self)
+        yesterday = (date.fromisoformat(last) - timedelta(1)).isoformat()
+        r = readiness.compute(conn, last, 1)
+        by_key = {p.key: p.day for p in r.parts}
+        self.assertEqual(by_key["stress"], yesterday)
+        for key in ("hrv", "sleep", "battery", "resting_hr"):
+            self.assertEqual(by_key[key], last)
+
     def test_update_stores_estimate_with_version(self):
         conn, last = make_db(self)
         readiness.update(conn, last, 1)
@@ -183,7 +195,7 @@ class ReadinessLectorEqualityTest(unittest.TestCase):
     as the original per-call query path (BODY-RENDIMIENTO-2)."""
 
     def _parts(self, r: readiness.Readiness):
-        return [(p.key, p.value, p.reference, p.subscore, p.weight) for p in r.parts]
+        return [(p.key, p.value, p.reference, p.subscore, p.weight, p.day) for p in r.parts]
 
     def test_matches_on_a_normal_day(self):
         conn, last = make_db(self)

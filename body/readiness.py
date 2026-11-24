@@ -37,6 +37,7 @@ class Part:
     reference: float | None  # baseline mean or sleep need
     subscore: float
     weight: float
+    day: str  # the day `value` was read from -- yesterday for stress, else the score's own day
 
 
 @dataclass
@@ -84,10 +85,10 @@ def compute(conn, day: str, person_id: int, *, lector=None) -> Readiness:
         else db.series(conn, "stress_avg", yesterday, yesterday, person_id)
     y_stress = y_series.get(yesterday)
 
-    raw: dict[str, tuple[float, float | None, float | None] | None] = {}
+    raw: dict[str, tuple[float, float | None, float | None, str] | None] = {}
 
     r = _vs_baseline(conn, "hrv_last_night", day, vals.get("hrv_last_night"), True, person_id, lector)
-    raw["hrv"] = (r[0], vals.get("hrv_last_night"), r[1]) if r else None
+    raw["hrv"] = (r[0], vals.get("hrv_last_night"), r[1], day) if r else None
 
     slept, need = vals.get("sleep_minutes"), vals.get("sleep_need_min")
     if slept is not None:
@@ -95,21 +96,21 @@ def compute(conn, day: str, person_id: int, *, lector=None) -> Readiness:
             b = baseline(conn, "sleep_minutes", day, person_id=person_id, lector=lector)
             need = max(b.mean, 420) if b else 480
         ratio = slept / need
-        raw["sleep"] = (_clamp(100 - (1 - ratio) * 160), slept, need)  # 90% of need -> 84, 70% -> 52
+        raw["sleep"] = (_clamp(100 - (1 - ratio) * 160), slept, need, day)  # 90% of need -> 84, 70% -> 52
     else:
         raw["sleep"] = None
 
     bb = vals.get("body_battery_wake")
     bb_base = baseline(conn, "body_battery_wake", day, person_id=person_id, lector=lector)
-    raw["battery"] = (_clamp(bb), bb, bb_base.mean if bb_base else None) if bb is not None else None
+    raw["battery"] = (_clamp(bb), bb, bb_base.mean if bb_base else None, day) if bb is not None else None
 
     r = _vs_baseline(conn, "resting_hr", day, vals.get("resting_hr"), False, person_id, lector)
-    raw["resting_hr"] = (r[0], vals.get("resting_hr"), r[1]) if r else None
+    raw["resting_hr"] = (r[0], vals.get("resting_hr"), r[1], day) if r else None
 
     r = _vs_baseline(conn, "stress_avg", yesterday, y_stress, False, person_id, lector)
-    raw["stress"] = (r[0], y_stress, r[1]) if r else None
+    raw["stress"] = (r[0], y_stress, r[1], yesterday) if r else None
 
-    parts = [Part(k, v[1], v[2], round(v[0], 1), WEIGHTS[k]) for k, v in raw.items() if v]
+    parts = [Part(k, v[1], v[2], round(v[0], 1), WEIGHTS[k], v[3]) for k, v in raw.items() if v]
     missing = [k for k, v in raw.items() if not v]
     have_core = any(p.key in ("hrv", "sleep") for p in parts)
     if len(parts) < MIN_PARTS or not have_core:

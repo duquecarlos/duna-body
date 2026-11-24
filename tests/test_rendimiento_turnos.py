@@ -88,8 +88,8 @@ class ReadinessStripEqualityTest(unittest.TestCase):
             self.assertEqual(with_lector.score, without.score, d)
             self.assertEqual(with_lector.version, without.version, d)
             self.assertEqual(with_lector.missing, without.missing, d)
-            parts_with = [(p.key, p.value, p.reference, p.subscore, p.weight) for p in with_lector.parts]
-            parts_without = [(p.key, p.value, p.reference, p.subscore, p.weight) for p in without.parts]
+            parts_with = [(p.key, p.value, p.reference, p.subscore, p.weight, p.day) for p in with_lector.parts]
+            parts_without = [(p.key, p.value, p.reference, p.subscore, p.weight, p.day) for p in without.parts]
             self.assertEqual(parts_with, parts_without, d)
 
 

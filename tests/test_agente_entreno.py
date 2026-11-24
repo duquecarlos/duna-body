@@ -658,6 +658,15 @@ class LeerHoySenalesTest(unittest.TestCase):
         self.assertNotIn("reentrada", out)
         self.assertNotIn("tras_carga", out)
 
+    def test_partes_del_puntaje_llevan_dia_dato(self):
+        """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: every part of leer_hoy's 'listo' carries
+        'dia_dato', the day its 'valor' came from, so a reader never puts it beside the wrong
+        day's figure (a Personal desk flag, 2026-11-24)."""
+        out = herramientas.ejecutar(self.conn, 1, "leer_hoy", {}, "completo")
+        for parte in out["listo"]["partes"]:
+            self.assertIn("dia_dato", parte)
+            self.assertIsNotNone(parte["dia_dato"])
+
     def test_leer_entreno_nunca_lleva_estas_claves(self):
         """Census for the design choice behind ruling 4: `leer_hoy` is the tool with a notion of
         'today' as a role (it already answers 'limitaciones', the despertar card, the plan-week

@@ -1036,7 +1036,7 @@ def _readiness_dict(r: readiness.Readiness) -> dict:
         "dia": r.day, "puntaje": r.score, "banda": r.band, "version": r.version,
         "faltantes": r.missing,
         "partes": [{"clave": p.key, "valor": p.value, "referencia": p.reference,
-                    "subpuntaje": p.subscore, "peso": p.weight} for p in r.parts],
+                    "subpuntaje": p.subscore, "peso": p.weight, "dia_dato": p.day} for p in r.parts],
     }
 
 
@@ -4403,7 +4403,9 @@ HERRAMIENTAS = [
                      "las limitaciones abiertas (una lesión en recuperación, con la zona si se nombró). "
                      "Incluye 'reentrada' si vuelves de una semana o más sin entrenar fuerza (con la sesión "
                      "y el volumen sugerido) y 'tras_carga' si ayer tuvo una actividad de carga alta (con "
-                     "los grupos musculares que cargó) -- ninguna de las dos aparece cuando no aplican.",
+                     "los grupos musculares que cargó) -- ninguna de las dos aparece cuando no aplican. "
+                     "Cada parte del puntaje trae 'dia_dato': el día del que viene su 'valor' -- el estrés "
+                     "es el de AYER (día completo), no el de hoy a medias.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_hoy},
     {"nombre": "leer_dia", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Las métricas, el sueño, las actividades y los turnos de un día concreto, sus "
