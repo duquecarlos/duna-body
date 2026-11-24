@@ -580,7 +580,29 @@ class EstadoYEventosTest(unittest.TestCase):
                                  json={"pregunta": "plan de pecho", "conversacion_id": None})
         self.assertEqual(r.status_code, 200)
         datos = _evento_data(r.text, "propuesta")
-        self.assertIn("Vuelta tras 7 días sin fuerza: sesión 1, volumen al 60 %.", datos["despues"])
+        self.assertIn("Vuelta tras 7 días sin fuerza: sesión 1, volumen al 90 %.", datos["despues"])
+
+    def test_planear_entreno_card_says_why_after_a_long_gap(self):
+        # BODY-REENTRADA-ESCALA-1: the same card, now for a gap long enough to land in the
+        # 'largo' band (29+ days), which keeps reentrada-v1's own 60 % first-session figure.
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, source) "
+            "VALUES (1, 'a0', '2026-09-01', '2026-09-01T18:00:00', 'strength_training', 'garmin')")
+        self.conn.commit()
+        guion = [
+            Respuesta(bloques=[LlamadaHerramienta("l1", "planear_entreno", {
+                "day": "2026-10-01", "titulo": "Pecho",
+                "ejercicios": [{"ejercicio": "press banca", "series": 5, "categoria": "pecho"}],
+            })], motivo_fin="tool_use", uso=Uso()),
+            Respuesta(bloques=[BloqueTexto("listo")], motivo_fin="end_turn", uso=Uso()),
+        ]
+        proveedor = FakeProveedor(guion)
+        with patch.object(agente_cliente, "proveedor_configurado", return_value=proveedor):
+            r = self.client.post("/asistente/preguntar",
+                                 json={"pregunta": "plan de pecho", "conversacion_id": None})
+        self.assertEqual(r.status_code, 200)
+        datos = _evento_data(r.text, "propuesta")
+        self.assertIn("Vuelta tras 30 días sin fuerza: sesión 1, volumen al 60 %.", datos["despues"])
 
     def test_planear_entreno_card_says_why_after_a_heavy_day(self):
         for i, (day, dur) in enumerate([("2026-10-01", 600.0), ("2026-10-03", 700.0), ("2026-10-05", 800.0)]):
