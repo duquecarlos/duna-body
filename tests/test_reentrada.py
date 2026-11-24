@@ -74,9 +74,10 @@ def _actividad(conn, person_id: int, day: str, tipo: str, nombre: str, start_loc
 
 
 class ReentradaGapTest(unittest.TestCase):
-    """Ruling 1: the gap ramp -- 7+ days without strength reads as session 1 at 60 % volume, the
-    next real session as session 2 at 80 %, the one after that back to normal (no key at all); a
-    6-day gap never qualifies in the first place."""
+    """Ruling 1 (BODY-REENTRADA-ESCALA-1): the gap ramp -- 7+ days without strength reads as
+    session 1, at the 'corto' band's own first factor (90 %), the next real session back to
+    normal (no key at all, since the band's own 2nd factor is 1.0); a 6-day gap never qualifies
+    in the first place."""
 
     def setUp(self):
         self.conn = _mkconn(self)
@@ -90,24 +91,19 @@ class ReentradaGapTest(unittest.TestCase):
         dia0 = "2026-10-01"
         _actividad(self.conn, 1, dia0, "strength_training", "Fuerza", f"{dia0}T18:00:00", 1800)
 
-        # Session 1 back, 7 days after dia0: 60 %.
+        # Session 1 back, 7 days after dia0: the 'corto' band's own first factor, 90 %.
         dia1 = date(2026, 10, 8)
         out1 = reentrada.senales(self.conn, 1, dia1)
-        self.assertEqual(out1["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.6})
+        self.assertEqual(out1["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.9,
+                                              "escalon": "corto", "dias_activos_en_brecha": 0})
 
         _actividad(self.conn, 1, dia1.isoformat(), "strength_training", "Fuerza", f"{dia1.isoformat()}T18:00:00", 1800)
 
-        # Session 2 back, 3 days after session 1 (still inside the original gap's own ramp): 80 %.
+        # Session 2 back, 3 days after session 1 (still inside the original gap's own ramp): the
+        # 'corto' band's own 2nd factor is 1.0 -- back to normal, no key at all.
         dia2 = dia1 + timedelta(3)
         out2 = reentrada.senales(self.conn, 1, dia2)
-        self.assertEqual(out2["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 2, "factor": 0.8})
-
-        _actividad(self.conn, 1, dia2.isoformat(), "strength_training", "Fuerza", f"{dia2.isoformat()}T18:00:00", 1800)
-
-        # Session 3 back: the ramp's own 3rd factor is 1.0 -- back to normal, no key at all.
-        dia3 = dia2 + timedelta(3)
-        out3 = reentrada.senales(self.conn, 1, dia3)
-        self.assertNotIn("reentrada", out3)
+        self.assertNotIn("reentrada", out2)
 
     def test_sin_historia_nunca_senala(self):
         self.assertNotIn("reentrada", reentrada.senales(self.conn, 1, date(2026, 11, 10)))
@@ -117,6 +113,93 @@ class ReentradaGapTest(unittest.TestCase):
         self.conn.commit()
         _actividad(self.conn, 2, "2026-10-01", "strength_training", "Fuerza", "2026-10-01T18:00:00", 1800)
         self.assertNotIn("reentrada", reentrada.senales(self.conn, 1, date(2026, 10, 8)))
+
+
+class EscalonesBandaTest(unittest.TestCase):
+    """Ruling 1 (BODY-REENTRADA-ESCALA-1): the ramp's own band depends on the gap's own length --
+    each band's first and second session factor, at its own edges (7, 14, 15, 28, 29 and 60
+    days). `escalon` and `dias_activos_en_brecha` ride along on every qualifying signal."""
+
+    def _brecha(self, gap_dias_reales: int, nombre: str = "brecha.db"):
+        """One qualifying gap of exactly `gap_dias_reales` days -- `dia0` the last strength
+        session before it, `dia1` the day training resumes, that first session's own signal."""
+        conn = _mkconn(self, nombre)
+        dia0 = date(2026, 1, 1)
+        _actividad(conn, 1, dia0.isoformat(), "strength_training", "Fuerza", f"{dia0.isoformat()}T18:00:00", 1800)
+        dia1 = dia0 + timedelta(gap_dias_reales)
+        return conn, dia0, dia1
+
+    def test_10_dias_da_90_luego_sin_clave(self):
+        """The Personal desk's own case, 2026-11-24, in the slice's own words: "a 10-day gap
+        gives 0.9, then 1.0, then no key" -- session 1 at 90 %, session 2's own factor reaches
+        1.0, so `senales` omits the key entirely rather than ever saying "1.0" out loud."""
+        conn, dia0, dia1 = self._brecha(10, "brecha10.db")
+        out1 = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out1["reentrada"], {"dias_sin_fuerza": 10, "sesion_n": 1, "factor": 0.9,
+                                              "escalon": "corto", "dias_activos_en_brecha": 0})
+        _actividad(conn, 1, dia1.isoformat(), "strength_training", "Fuerza", f"{dia1.isoformat()}T18:00:00", 1800)
+        out2 = reentrada.senales(conn, 1, dia1 + timedelta(3))
+        self.assertNotIn("reentrada", out2)
+
+    def test_7_dias_banda_corto(self):
+        conn, dia0, dia1 = self._brecha(7, "brecha7.db")
+        out = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out["reentrada"]["factor"], 0.9)
+        self.assertEqual(out["reentrada"]["escalon"], "corto")
+
+    def test_14_dias_banda_corto(self):
+        conn, dia0, dia1 = self._brecha(14, "brecha14.db")
+        out = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out["reentrada"]["factor"], 0.9)
+        self.assertEqual(out["reentrada"]["escalon"], "corto")
+
+    def test_15_dias_banda_medio(self):
+        conn, dia0, dia1 = self._brecha(15, "brecha15.db")
+        out1 = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out1["reentrada"]["factor"], 0.75)
+        self.assertEqual(out1["reentrada"]["escalon"], "medio")
+        _actividad(conn, 1, dia1.isoformat(), "strength_training", "Fuerza", f"{dia1.isoformat()}T18:00:00", 1800)
+        out2 = reentrada.senales(conn, 1, dia1 + timedelta(3))
+        self.assertEqual(out2["reentrada"]["factor"], 0.9)
+        self.assertEqual(out2["reentrada"]["escalon"], "medio")
+
+    def test_28_dias_banda_medio(self):
+        conn, dia0, dia1 = self._brecha(28, "brecha28.db")
+        out = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out["reentrada"]["factor"], 0.75)
+        self.assertEqual(out["reentrada"]["escalon"], "medio")
+
+    def test_29_dias_banda_largo(self):
+        """reentrada-v1's own original 3-step ramp, now reserved for a gap this long: session 1
+        at 60 %, session 2 at 80 %, session 3 back to normal (no key)."""
+        conn, dia0, dia1 = self._brecha(29, "brecha29.db")
+        out1 = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out1["reentrada"]["factor"], 0.6)
+        self.assertEqual(out1["reentrada"]["escalon"], "largo")
+        _actividad(conn, 1, dia1.isoformat(), "strength_training", "Fuerza", f"{dia1.isoformat()}T18:00:00", 1800)
+        dia2 = dia1 + timedelta(3)
+        out2 = reentrada.senales(conn, 1, dia2)
+        self.assertEqual(out2["reentrada"]["factor"], 0.8)
+        self.assertEqual(out2["reentrada"]["escalon"], "largo")
+        _actividad(conn, 1, dia2.isoformat(), "strength_training", "Fuerza", f"{dia2.isoformat()}T18:00:00", 1800)
+        out3 = reentrada.senales(conn, 1, dia2 + timedelta(3))
+        self.assertNotIn("reentrada", out3)
+
+    def test_60_dias_banda_largo(self):
+        conn, dia0, dia1 = self._brecha(60, "brecha60.db")
+        out = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out["reentrada"]["factor"], 0.6)
+        self.assertEqual(out["reentrada"]["escalon"], "largo")
+
+    def test_dias_activos_en_brecha_cuenta_actividad_sin_cambiar_el_factor(self):
+        conn, dia0, dia1 = self._brecha(10, "brecha-activa.db")
+        _actividad(conn, 1, (dia0 + timedelta(3)).isoformat(), "walking", "Caminata",
+                   f"{(dia0 + timedelta(3)).isoformat()}T07:00:00", 600)
+        _actividad(conn, 1, (dia0 + timedelta(5)).isoformat(), "walking", "Caminata",
+                   f"{(dia0 + timedelta(5)).isoformat()}T07:00:00", 600)
+        out = reentrada.senales(conn, 1, dia1)
+        self.assertEqual(out["reentrada"]["factor"], 0.9)  # unchanged by the activity in the gap
+        self.assertEqual(out["reentrada"]["dias_activos_en_brecha"], 2)
 
 
 class TrasCargaTest(unittest.TestCase):
@@ -180,10 +263,14 @@ class ModeloCensoTest(unittest.TestCase):
     TIER-1-1)."""
 
     def test_version_y_umbrales(self):
-        self.assertEqual(reentrada.MODELO["version"], "reentrada-v1")
-        self.assertEqual(set(reentrada.MODELO.keys()), {"version", "gap_dias", "factores", "carga_alta_factor"})
+        self.assertEqual(reentrada.MODELO["version"], "reentrada-v2")
+        self.assertEqual(set(reentrada.MODELO.keys()), {"version", "gap_dias", "escalones", "carga_alta_factor"})
         self.assertEqual(reentrada.MODELO["gap_dias"], 7)
-        self.assertEqual(reentrada.MODELO["factores"], [0.6, 0.8, 1.0])
+        self.assertEqual(reentrada.MODELO["escalones"], [
+            {"desde_dias": 7, "hasta_dias": 14, "nombre": "corto", "factores": [0.9, 1.0]},
+            {"desde_dias": 15, "hasta_dias": 28, "nombre": "medio", "factores": [0.75, 0.9, 1.0]},
+            {"desde_dias": 29, "hasta_dias": None, "nombre": "largo", "factores": [0.6, 0.8, 1.0]},
+        ])
         self.assertEqual(reentrada.MODELO["carga_alta_factor"], 1.5)
 
 

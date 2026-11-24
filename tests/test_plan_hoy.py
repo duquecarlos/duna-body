@@ -314,7 +314,7 @@ class DiaPorDelanteSenalesTest(unittest.TestCase):
         _plan_hoy_row(conn)
         _activity(conn, "2026-11-05", "strength_training", "a0")  # 7 days before HOY
         page = _get().text
-        self.assertIn("Vuelta tras 7 días sin fuerza: sesión 1, volumen al 60 %.", page)
+        self.assertIn("Vuelta tras 7 días sin fuerza: sesión 1, volumen al 90 %.", page)
 
     def test_tras_carga_shows_on_the_planned_session_line(self):
         conn = _reset_db(self)

@@ -4401,9 +4401,13 @@ HERRAMIENTAS = [
     {"nombre": "leer_hoy", "tipo": "lectura", "nivel": "completo",
      "descripcion": "Qué tan listo estás hoy: el puntaje de preparación, los valores del día más reciente y "
                      "las limitaciones abiertas (una lesión en recuperación, con la zona si se nombró). "
-                     "Incluye 'reentrada' si vuelves de una semana o más sin entrenar fuerza (con la sesión "
-                     "y el volumen sugerido) y 'tras_carga' si ayer tuvo una actividad de carga alta (con "
-                     "los grupos musculares que cargó) -- ninguna de las dos aparece cuando no aplican. "
+                     "Incluye 'reentrada' si vuelves de una semana o más sin entrenar fuerza: en una brecha "
+                     "'corta' (1-2 semanas) usa el mismo peso de siempre, una serie menos, y para 1-2 "
+                     "repeticiones antes del fallo; en una brecha 'media' o 'larga' baja el volumen según "
+                     "el 'factor' sugerido. Trae también 'dias_activos_en_brecha' (cuántos días de la brecha "
+                     "tuvieron alguna actividad, solo como contexto -- nunca cambia el factor). Y 'tras_carga' "
+                     "si ayer tuvo una actividad de carga alta (con los grupos musculares que cargó) -- "
+                     "ninguna de las dos aparece cuando no aplican. "
                      "Cada parte del puntaje trae 'dia_dato': el día del que viene su 'valor' -- el estrés "
                      "es el de AYER (día completo), no el de hoy a medias.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_hoy},
@@ -4537,7 +4541,9 @@ HERRAMIENTAS = [
      "descripcion": "Qué días de un rango están libres para entrenar según sus turnos confirmados, y "
                      "para cada día que no lo está, el motivo (un turno ese día, o que sale de un turno "
                      "de noche esa mañana). Cada día incluye 'reentrada'/'tras_carga' cuando aplican, la "
-                     "misma señal de leer_hoy. Úsalo antes de proponer un día.",
+                     "misma señal de leer_hoy (con su 'escalon' -- corto, medio o largo -- y "
+                     "'dias_activos_en_brecha' como contexto, no cambia el factor). Úsalo antes de "
+                     "proponer un día.",
      "parametros": _PARAM_LEER_DIAS_LIBRES, "funcion": _leer_dias_libres},
     {"nombre": "leer_ajustes", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Tus datos de perfil (nombre, zona horaria, idioma) y tu nivel de datos del asistente.",
@@ -4648,9 +4654,11 @@ HERRAMIENTAS = [
                      "'limitaciones' de leer_hoy: si una zona está en recuperación, mantén la carga de esa "
                      "zona por debajo de lo normal y dilo en el plan -- tú nunca inventas una carga concreta, "
                      "solo dices el límite. Si leer_hoy o leer_dias_libres marcan 'reentrada' (vuelve de una "
-                     "semana o más sin fuerza) o 'tras_carga' (ayer tuvo una carga alta), esta misma "
-                     "herramienta ya ajusta el volumen o quita los ejercicios de esos grupos sola -- no lo "
-                     "hagas tú, solo tenlo en cuenta al elegir qué proponer. No lo crea: registra la "
+                     "semana o más sin fuerza: en una brecha 'corta' casi sin cambio de volumen, en una "
+                     "'media' o 'larga' bajándolo según el factor) o 'tras_carga' (ayer tuvo una carga alta), "
+                     "esta misma herramienta ya ajusta el volumen o quita los ejercicios de esos grupos sola "
+                     "-- no lo hagas tú, solo tenlo en cuenta al elegir qué proponer ('dias_activos_en_brecha' "
+                     "es solo contexto, no cambia nada). No lo crea: registra la "
                      "propuesta para que la persona la apruebe en el chat. Antes de proponer un día, mira "
                      "leer_dias_libres: propón un día libre. Si ninguno lo está, dilo con el motivo de cada "
                      "día y deja que la persona elija; nunca inventes una fecha.",
