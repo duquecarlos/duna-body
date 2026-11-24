@@ -42,6 +42,10 @@ class BasicsTest(unittest.TestCase):
         """BODY-HISTORIA-MINUTO-2, ruling 2."""
         self.assertRegex(self.text, r"\n\s*cobertura\)\n")
 
+    def test_detalle_historia_action_present_in_case(self):
+        """BODY-DETALLE-HISTORIA-1, ruling 5."""
+        self.assertRegex(self.text, r"\n\s*detalle-historia\)\n")
+
 
 class PersonasActionTest(unittest.TestCase):
     def setUp(self):
@@ -113,6 +117,37 @@ class CoberturaActionTest(unittest.TestCase):
     def test_json_flag_is_forwarded_when_given(self):
         body = self._body()
         self.assertIn("--json", body)
+
+    def test_touches_no_timer_and_no_backup(self):
+        body = self._body()
+        self.assertNotIn("systemctl", body)
+        self.assertNotIn("body-backup.sh", body)
+        self.assertNotIn("body.backup snapshot", body)
+
+
+class DetalleHistoriaActionTest(unittest.TestCase):
+    """BODY-DETALLE-HISTORIA-1, ruling 5: mirrors cobertura's own arm shape."""
+
+    def setUp(self):
+        self.text = _read(IMPORT)
+
+    def _body(self) -> str:
+        start = self.text.index("detalle-historia)")
+        end = self.text.index("\n  importar-pc)", start)
+        return self.text[start:end]
+
+    def test_cuenta_sub_is_required(self):
+        self.assertIn("detalle-historia requires --cuenta-sub", self._body())
+
+    def test_runs_as_data_user_via_runuser(self):
+        body = self._body()
+        self.assertIn('runuser -u "$DATA_USER"', body)
+        self.assertIn("body.detalle_historia", body)
+
+    def test_dry_run_and_max_flags_are_forwarded_when_given(self):
+        body = self._body()
+        self.assertIn("--dry-run", body)
+        self.assertIn("--max", body)
 
     def test_touches_no_timer_and_no_backup(self):
         body = self._body()

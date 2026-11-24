@@ -14,6 +14,10 @@ from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
+from garminconnect.exceptions import (
+    GarminConnectConnectionError, GarminConnectNotFoundError, GarminConnectTooManyRequestsError,
+)
+
 from tests._db import open_conn
 
 from body import db, garmin_adapter
@@ -144,6 +148,28 @@ class PrivacidadCoverageIncludesActivityDetailTest(unittest.TestCase):
     def test_activity_detail_is_fully_handled(self):
         from body import privacidad
         self.assertIn("activity_detail", privacidad.FULLY_HANDLED_TABLES)
+
+
+# ------------------------------------------------------ ruling 1: detalle_no_disponible (BODY-DETALLE-HISTORIA-1)
+
+
+class DetalleNoDisponibleTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: a 404 is told apart, by class name alone, from
+    every other error class -- 429, a 5xx/connection failure, and any unrecognised class."""
+
+    def test_a_404_is_not_available(self):
+        self.assertTrue(garmin_adapter.detalle_no_disponible(GarminConnectNotFoundError.__name__))
+
+    def test_too_many_requests_is_not_a_404(self):
+        self.assertFalse(garmin_adapter.detalle_no_disponible(GarminConnectTooManyRequestsError.__name__))
+
+    def test_a_plain_connection_error_is_not_a_404(self):
+        """GarminConnectNotFoundError subclasses GarminConnectConnectionError -- the class NAME
+        comparison must not collapse the two."""
+        self.assertFalse(garmin_adapter.detalle_no_disponible(GarminConnectConnectionError.__name__))
+
+    def test_an_unrelated_class_name_is_not_a_404(self):
+        self.assertFalse(garmin_adapter.detalle_no_disponible("RuntimeError"))
 
 
 # ---------------------------------------------------------------------------------- adapter: fetch
