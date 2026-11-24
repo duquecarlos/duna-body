@@ -77,6 +77,7 @@ from .. import anatomia, baselines, captura_sueno, catalogo_tendencias, comidas,
     experimentos, fechas, garmin_adapter, garmin_cuenta, goals, history, horizonte, household, noche_rasgos, \
     nutriente_objetivo, practicas, profile, pull, readiness, reentrada, registro_cobertura, shift_import, \
     sueno_fc, turnos_costo, tutoriales, viajes
+from .. import productos as productos_mod
 from ..i18n import LANGS, T
 from . import ajustes, conversacion as agente_conversacion, propuestas
 
@@ -592,6 +593,20 @@ _PARAM_COMENSAL_COMPARTIDO = {
 # momento_comida rows, or the DEFAULT_MOMENTOS claves when they have none) -- checked in CODE
 # against the live `comidas.momentos` at call time, never a hardcoded enum, the same template
 # pattern `registrar_medida`'s metric_key already uses for a per-person live source.
+# BODY-COMIDA-PRODUCTO-1 ruling 3: one product the person names in a meal, by portion -- `unidad`
+# must match that product's own nutrition basis (g for a 100g basis, ml for 100ml, 'unidad' for a
+# per-unit basis), refused BY NAME otherwise. Described here only for the model's own guidance,
+# same reason _PARAM_CANTIDAD_COMIDA above is -- the real enforcement is `productos.calcular_lineas`.
+_PARAM_PRODUCTO_LINEA = {
+    "type": "object",
+    "properties": {
+        "producto_id": {"type": "integer"},
+        "cantidad": {"type": "number"},
+        "unidad": {"type": "string", "enum": ["g", "ml", "unidad"]},
+    },
+    "required": ["producto_id", "cantidad", "unidad"],
+    "additionalProperties": False,
+}
 _PARAM_REGISTRAR_COMIDA = {
     "type": "object",
     "properties": {
@@ -599,6 +614,12 @@ _PARAM_REGISTRAR_COMIDA = {
         "hora": {"type": "string", "description": _HORA_PARAM_DESCRIPCION},
         "descripcion": {"type": "string"},
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
+        # BODY-COMIDA-PRODUCTO-1 ruling 3: additive to `cantidades` -- a product's own nutrition,
+        # summed into the matching nutrient's amount, never replacing a free-text cantidad for
+        # anything the product itself has no figure for. `buscar_productos` resolves a name to a
+        # producto_id first; a product this person has never typed is simply not found, never
+        # guessed from a name here.
+        "productos": {"type": "array", "items": _PARAM_PRODUCTO_LINEA},
         "compartida_con": {"type": "array", "items": _PARAM_COMENSAL_COMPARTIDO},
         "momento": {"type": "string", "description": (
             "Una de las claves propias de momento de comida de la persona (comidas.momentos: sus "
@@ -607,12 +628,16 @@ _PARAM_REGISTRAR_COMIDA = {
             "distinta ('mañana' no es un momento). Un valor que no sea una de esas claves se "
             "rechaza nombrando las que sí son válidas para esa persona.")},
     },
-    "required": ["descripcion", "cantidades"],
+    "required": ["descripcion"],
     "additionalProperties": False,
 }
 # BODY-COMIDA-CORREGIR-1: a field left out keeps its current value, the same convention
 # _PARAM_CORREGIR_PERIODO already uses; 'cantidades', when given, REPLACES the whole set (never
 # merged with the existing one) -- the same shape _PARAM_REGISTRAR_COMIDA's own field uses.
+# BODY-COMIDA-PRODUCTO-1: 'productos', when given, REPLACES the meal's whole product-line set the
+# same way -- only together with 'cantidades' (the resulting amounts), never on its own, since
+# there is no way to tell apart what a stored amount owed to a product from what it owed to free
+# text once both are already merged into one ingesta row.
 _PARAM_CORREGIR_COMIDA = {
     "type": "object",
     "properties": {
@@ -621,8 +646,33 @@ _PARAM_CORREGIR_COMIDA = {
         "day": {"type": "string", "format": "date"},
         "descripcion": {"type": "string"},
         "cantidades": {"type": "array", "items": _PARAM_CANTIDAD_COMIDA, "minItems": 1},
+        "productos": {"type": "array", "items": _PARAM_PRODUCTO_LINEA},
     },
     "required": ["comida_id"],
+    "additionalProperties": False,
+}
+_PARAM_BUSCAR_PRODUCTOS = {
+    "type": "object",
+    "properties": {"texto": {"type": "string"}},
+    "required": ["texto"],
+    "additionalProperties": False,
+}
+# BODY-COMIDA-PRODUCTO-1-B ruling B: a manual product with optional label nutrition, the same
+# shape the picker's own "Nuevo producto" form (body/rutas/comida.py) writes through
+# productos_mod.crear_producto_manual/establecer_nutricion. `nutrientes` is a plain
+# {metric_key: amount} dict, read per `tamano_unidad`'s own basis (g -> 100g, ml -> 100ml, unidad
+# -> unidad) -- the SAME basis a meal line naming this product will later be checked against
+# (productos_mod.calcular_lineas), so `tamano_unidad` is required whenever `nutrientes` is given.
+_PARAM_CREAR_PRODUCTO = {
+    "type": "object",
+    "properties": {
+        "nombre": {"type": "string"},
+        "marca": {"type": "string"},
+        "tamano_neto": {"type": "number"},
+        "tamano_unidad": {"type": "string", "enum": ["g", "ml", "unidad"]},
+        "nutrientes": {"type": "object"},
+    },
+    "required": ["nombre"],
     "additionalProperties": False,
 }
 
@@ -3270,15 +3320,53 @@ def _validar_comensal_nutrientes(t: T, nutrientes) -> dict:
     return limpio
 
 
+def _mezclar_cantidades_producto(conn: sqlite3.Connection, person_id: int, t: T, limpias: list[dict],
+                                  productos: list | None) -> list[dict] | None:
+    """BODY-COMIDA-PRODUCTO-1 ruling 3: resolves `productos` against this person's own visible
+    products (`productos_mod.calcular_lineas`, refusing BY NAME an unseen product or a unit that
+    does not match its own basis), sums each resulting nutrient INTO `limpias` (the free-text
+    cantidades already validated, mutated in place) and returns the raw product lines, for the
+    caller to attach as its own named `productos` field on the proposal row, alongside
+    `cantidades` (BODY-COMIDA-PRODUCTO-1-B: no longer smuggled through `cantidades[0]`). None when
+    `productos` is empty/not given -- `limpias` is left untouched."""
+    if not productos:
+        return None
+    try:
+        cantidades_producto, detalle = productos_mod.calcular_lineas(conn, person_id, productos)
+    except productos_mod.ProductoDesconocido as e:
+        raise ToolError(t("agente.error.producto_desconocido", producto_id=e.producto_id))
+    except productos_mod.UnidadNoCoincide as e:
+        raise ToolError(t("agente.error.producto_unidad_no_coincide", producto=e.nombre,
+                           esperada=e.esperada, recibida=e.recibida))
+    except ValueError:
+        raise ToolError(t("agente.error.producto_linea_invalida"))
+    por_clave = {c["metric_key"]: c for c in limpias}
+    for c in cantidades_producto:
+        existente = por_clave.get(c["metric_key"])
+        if existente is not None:
+            existente["amount"] += c["amount"]
+            existente["estimado"] = existente["estimado"] or c["estimado"]
+        else:
+            limpias.append(c)
+            por_clave[c["metric_key"]] = c
+    return detalle
+
+
 def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, descripcion: str,
-                       cantidades: list, day: str | None = None, hora: str | None = None,
-                       compartida_con: list | None = None, momento: str | None = None) -> dict:
+                       cantidades: list | None = None, day: str | None = None, hora: str | None = None,
+                       compartida_con: list | None = None, momento: str | None = None,
+                       productos: list | None = None) -> dict:
     """Proposes one spoken meal as a single call (BODY-COMIDA-1 ruling 3): estimate every nutrient
     you can from the person's own words -- never ask them to weigh food -- say which amounts are
     estimates, and name caffeine/alcohol with the time when the person gives one. Insert-shaped,
     like `registrar_ingesta`: there is no 'before'. Every number is validated at the door
     (`_numero_cantidad_comida`) before anything is stored: one bad amount refuses the WHOLE call,
     no row written, naming the field -- never a partial meal.
+
+    BODY-COMIDA-PRODUCTO-1 ruling 3: `productos` is additive to `cantidades` -- resolved against
+    this person's own visible products and summed into the matching nutrient (see
+    `_mezclar_cantidades_producto`); at least one of `cantidades`/`productos` must end up
+    contributing something, or the call is refused the same way an empty `cantidades` always was.
 
     BODY-COMIDA-COMPARTIDA-1 ruling 4: `compartida_con` names who else ate it -- resolved against
     the household, refused BY NAME (`agente.error.comida_sin_consentimiento`) before the proposal
@@ -3292,13 +3380,19 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     descripcion = (descripcion or "").strip()
     if not descripcion:
         raise ToolError("falta la descripción de la comida")
-    if not cantidades:
-        raise ToolError("se necesita al menos una cantidad")
+    if not cantidades and not productos:
+        raise ToolError("se necesita al menos una cantidad o un producto")
+    if productos and compartida_con:
+        # BODY-COMIDA-PRODUCTO-1: body/comida_compartida.py's own compartir_comida rebuilds
+        # `cantidades` from a plain {metric_key: amount} dict and has no `productos` parameter of
+        # its own (comida_compartida.py is not in this slice's `touches:`), which would silently
+        # drop the product lines -- refused BY NAME instead, never a silent loss.
+        raise ToolError("no se pueden combinar productos con una comida compartida en esta versión")
     t = T(db.person(conn, person_id)["language"])
     catalogo = set(db.INGESTA_METRIC_KEYS)
     vistas = set()
     limpias = []
-    for c in cantidades:
+    for c in (cantidades or []):
         if not isinstance(c, dict):
             raise ToolError("cada cantidad debe ser un objeto con metric_key y amount")
         metric_key = c.get("metric_key")
@@ -3313,6 +3407,9 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
         if not isinstance(estimado, bool):
             raise ToolError("estimado debe ser verdadero o falso")
         limpias.append({"metric_key": metric_key, "amount": amount, "estimado": estimado})
+    lineas_detalle = _mezclar_cantidades_producto(conn, person_id, t, limpias, productos)
+    if not limpias:
+        raise ToolError("se necesita al menos una cantidad o un producto")
     if momento is not None:
         claves_momento = [m["clave"] for m in comidas.momentos(conn, person_id)]
         if momento not in claves_momento:
@@ -3324,6 +3421,8 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
     ts_local = f"{day}T{hora_hhmmss}" if hora_hhmmss is not None else None
     despues = {"descripcion": descripcion, "cantidades": limpias, "day": day,
                "ts_local": ts_local, "momento": momento}
+    if lineas_detalle is not None:
+        despues["productos"] = lineas_detalle
     if compartida_con:
         comensales_limpios = []
         vistos_pid = set()
@@ -3347,7 +3446,7 @@ def _registrar_comida(conn: sqlite3.Connection, person_id: int, conversacion_id:
 
 def _corregir_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: int, comida_id: int,
                       hora: str | None = None, day: str | None = None, descripcion: str | None = None,
-                      cantidades: list | None = None) -> dict:
+                      cantidades: list | None = None, productos: list | None = None) -> dict:
     """Proposes correcting a MEAL as a unit (ORCH-CARLOS-DELEGATES-TIER-1-1, BODY-COMIDA-CORREGIR-1:
     one correction the person means as one change is ONE proposal, never one per nutrient row).
     A field left out keeps its current value, the same convention `_corregir_periodo` already
@@ -3357,9 +3456,17 @@ def _corregir_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: 
     `despues` each carry the meal's FULL state (day, ts_local, descripcion, every amount), so
     `propuestas.deshacer` can restore it exactly through the same writer (`db.corregir_comida`).
     For a single standalone intake row that is not part of a meal, `corregir_ingesta`/
-    `borrar_ingesta` stay the way to change it."""
-    if hora is None and day is None and descripcion is None and cantidades is None:
+    `borrar_ingesta` stay the way to change it.
+
+    BODY-COMIDA-PRODUCTO-1 ruling 3: `productos`, when given, REPLACES the meal's whole set of
+    product lines -- only together with `cantidades` (the resulting amounts): there is no way to
+    tell apart, in an already-merged stored amount, what came from a product and what came from
+    free text, so changing the product lines always means resending the full resulting amounts
+    too (refused BY NAME otherwise)."""
+    if hora is None and day is None and descripcion is None and cantidades is None and productos is None:
         raise ToolError("se necesita al menos un campo para corregir")
+    if productos is not None and cantidades is None:
+        raise ToolError("para corregir los productos de la comida también hay que dar las cantidades resultantes")
     fila = conn.execute(
         "SELECT day, ts_local, descripcion FROM comida WHERE id = ? AND person_id = ?",
         (comida_id, person_id)).fetchone()
@@ -3370,6 +3477,10 @@ def _corregir_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: 
         for r in conn.execute(
             "SELECT metric_key, amount, estimado FROM ingesta WHERE comida_id = ? ORDER BY id", (comida_id,))
     ]
+    # BODY-COMIDA-PRODUCTO-1-B: the meal's own current product lines, always snapshotted (even
+    # empty) so `propuestas.deshacer` can restore them exactly through the same writer, whether or
+    # not THIS correction touches `productos` at all.
+    productos_actuales = productos_mod.lineas_de_comida(conn, comida_id)
     day_derivado, hora_hhmmss = _hora_a_ts_local(conn, person_id, day, hora)
     nuevo_day = day_derivado if day_derivado is not None else fila["day"]
     _dia_no_futuro(conn, person_id, nuevo_day)
@@ -3410,13 +3521,73 @@ def _corregir_comida(conn: sqlite3.Connection, person_id: int, conversacion_id: 
             if not isinstance(estimado, bool):
                 raise ToolError("estimado debe ser verdadero o falso")
             nuevas_cantidades.append({"metric_key": metric_key, "amount": amount, "estimado": estimado})
+        lineas_detalle = _mezclar_cantidades_producto(conn, person_id, t, nuevas_cantidades, productos)
+        if not nuevas_cantidades:
+            raise ToolError("se necesita al menos una cantidad o un producto")
     else:
         nuevas_cantidades = cantidades_actuales
+        lineas_detalle = None
     antes = {"day": fila["day"], "ts_local": fila["ts_local"], "descripcion": fila["descripcion"],
-             "cantidades": cantidades_actuales}
+             "cantidades": cantidades_actuales, "productos": productos_actuales}
     despues = {"comida_id": comida_id, "day": nuevo_day, "ts_local": nuevo_ts_local,
                "descripcion": nueva_descripcion, "cantidades": nuevas_cantidades}
+    if productos is not None:
+        # BODY-COMIDA-PRODUCTO-1: an explicit `productos` (even []) always replaces the meal's
+        # whole product-line set -- attached even when `lineas_detalle` ends up empty (clearing
+        # every line), distinct from "productos not given at all" (left untouched on apply).
+        despues["productos"] = lineas_detalle or []
     registro = propuestas.crear(conn, person_id, conversacion_id, "corregir_comida", despues, antes=antes)
+    return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
+
+
+def _buscar_productos(conn: sqlite3.Connection, person_id: int, texto: str) -> dict:
+    """BODY-COMIDA-PRODUCTO-1 ruling 3: searches this person's own visible products (their own
+    manual ones plus their active household's), so the assistant can resolve a name like «el
+    churrasco de Districarnes» to a producto_id before calling registrar_comida/corregir_comida
+    with it. A read-only tool -- it never creates a product; a product missing from this list has
+    to be typed by hand at /comida/productos (the picker), the same place every manual product is
+    created this slice."""
+    encontrados = productos_mod.buscar(conn, person_id, texto)
+    return {"productos": [
+        {"producto_id": p["id"], "nombre": p["nombre_mostrado"], "marca": p["marca"],
+         "unidad": productos_mod.basis_de_producto(conn, p["id"])}
+        for p in encontrados
+    ]}
+
+
+_BASIS_DE_UNIDAD = {"g": "100g", "ml": "100ml", "unidad": "unidad"}
+
+
+def _crear_producto(conn: sqlite3.Connection, person_id: int, conversacion_id: int, nombre: str,
+                     marca: str | None = None, tamano_neto: float | None = None,
+                     tamano_unidad: str | None = None, nutrientes: dict | None = None) -> dict:
+    """BODY-COMIDA-PRODUCTO-1-B ruling B: proposes a manual product with optional label nutrition,
+    insert-shaped like `registrar_comida` -- there is no 'before'. `nutrientes` (metric_key ->
+    amount, read per `tamano_unidad`'s own basis) is a label's own figures, never a health figure
+    of the person, so this tool stays at nivel_datos='ninguno' like every other proposal tool.
+    Nothing is written until the person applies it in the chat: the product does not exist, and
+    `buscar_productos` will not find it, until then."""
+    t = T(db.person(conn, person_id)["language"])
+    nombre = (nombre or "").strip()
+    if not nombre:
+        raise ToolError("falta el nombre del producto")
+    marca = (marca or "").strip() or None
+    if tamano_neto is not None and (isinstance(tamano_neto, bool)
+                                     or not isinstance(tamano_neto, (int, float)) or tamano_neto <= 0):
+        raise ToolError("tamano_neto debe ser un número mayor que cero")
+    nutrientes_limpios: dict[str, float] = {}
+    if nutrientes:
+        if tamano_unidad is None:
+            raise ToolError("para dar la nutrición de la etiqueta hace falta tamano_unidad (g, ml o unidad)")
+        catalogo = set(db.INGESTA_METRIC_KEYS)
+        for metric_key, valor in nutrientes.items():
+            if metric_key not in catalogo:
+                raise ToolError(f"ingesta desconocida o no acumulable: {metric_key!r}")
+            nutrientes_limpios[metric_key] = _numero_cantidad_comida(
+                t, metric_key, valor, clave_error="agente.error.comida_cantidad_invalida")
+    despues = {"nombre": nombre, "marca": marca, "tamano_neto": tamano_neto,
+               "tamano_unidad": tamano_unidad, "nutrientes": nutrientes_limpios}
+    registro = propuestas.crear(conn, person_id, conversacion_id, "crear_producto", despues)
     return {"propuesta_id": registro["id"], "estado": registro["estado"], "_registro": registro}
 
 
@@ -4579,11 +4750,17 @@ HERRAMIENTAS = [
                      "cafeína y alcohol cuando la persona la dé. Si la persona dice que comió con alguien de "
                      "su hogar, agrega 'compartida_con': una entrada por esa persona (su nombre, su propia "
                      "porción en nutrientes, y el texto de la porción si lo dio, por ejemplo 'la mitad'); esa "
-                     "persona recibe su porción para aplicarla ella misma, nunca entra a su registro sola. "
+                     "persona recibe su porción para aplicarla ella misma, nunca entra a su registro sola -- "
+                     "'productos' no se puede combinar con 'compartida_con' todavía. "
                      "'momento', si lo das, debe ser una de las claves propias de la persona (ver la "
                      "descripción de ese campo); un valor que no sea una de ellas se rechaza nombrando las "
-                     "que sí son válidas para esa persona. No lo guarda: registra la propuesta para que la "
-                     "persona la apruebe en el chat.",
+                     "que sí son válidas para esa persona. Si la persona nombra un producto que ya tiene "
+                     "guardado (por ejemplo 'el churrasco de Districarnes'), usa buscar_productos primero "
+                     "para encontrar su producto_id y agrégalo en 'productos' con la cantidad y unidad que "
+                     "dio -- su nutrición se suma a 'cantidades' sola, nunca hace falta estimarla también a "
+                     "mano. Un producto que no encuentres en buscar_productos no existe aún: dile a la "
+                     "persona que puede agregarlo a mano en /comida/productos. No lo guarda: registra la "
+                     "propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_REGISTRAR_COMIDA, "funcion": _registrar_comida},
     {"nombre": "corregir_comida", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone corregir la hora, el día, la descripción o las cantidades de una comida que ya "
@@ -4593,9 +4770,31 @@ HERRAMIENTAS = [
                      "redacción o las cantidades de una comida; para corregir o eliminar un solo registro de "
                      "consumo que no forma parte de una comida sigue usando corregir_ingesta/borrar_ingesta. "
                      "'cantidades', cuando se da, reemplaza por completo el conjunto de cantidades de la "
-                     "comida -- nunca se combina con lo que ya tenía. No la corrige: registra la propuesta "
-                     "para que la persona la apruebe en el chat.",
+                     "comida -- nunca se combina con lo que ya tenía. 'productos', cuando se da, reemplaza "
+                     "por completo el conjunto de productos de la comida (una lista vacía los quita todos) -- "
+                     "solo se puede dar junto con 'cantidades', ya que las cantidades resultantes también "
+                     "cambian. No la corrige: registra la propuesta para que la persona la apruebe en el chat.",
      "parametros": _PARAM_CORREGIR_COMIDA, "funcion": _corregir_comida},
+    {"nombre": "buscar_productos", "tipo": "lectura", "nivel": "ninguno",
+     "descripcion": "Busca entre los productos que esta persona ya tiene guardados (los suyos propios y, si "
+                     "pertenece a un hogar, los del hogar), por nombre, marca o alias, sin tener en cuenta "
+                     "mayúsculas ni tildes. Úsala para resolver el nombre de un producto que la persona "
+                     "menciona a su producto_id antes de llamar a registrar_comida/corregir_comida con "
+                     "'productos'. Cada resultado incluye 'unidad': la unidad que esa herramienta espera para "
+                     "ese producto (g, ml o unidad), o null cuando el producto aún no tiene ninguna nutrición "
+                     "guardada. Un producto que no aparece aquí no existe aún -- esta herramienta nunca lo "
+                     "crea; dile a la persona que puede agregarlo a mano en /comida/productos.",
+     "parametros": _PARAM_BUSCAR_PRODUCTOS, "funcion": _buscar_productos},
+    {"nombre": "crear_producto", "tipo": "propuesta", "nivel": "ninguno",
+     "descripcion": "Propone crear un producto nuevo que la persona describe (por ejemplo «el churrasco de "
+                     "Districarnes») cuando buscar_productos no lo encontró. 'nombre' es obligatorio; "
+                     "'marca', 'tamano_neto' y 'tamano_unidad' son opcionales. 'nutrientes' (opcional) es la "
+                     "nutrición de la etiqueta -- metric_key: cantidad -- leída por cada 100 g/100 ml, o por "
+                     "unidad según 'tamano_unidad' (obligatorio si se da 'nutrientes'); usa solo lo que la "
+                     "etiqueta realmente diga, nunca un valor inventado o estimado. No lo crea todavía: "
+                     "registra la propuesta para que la persona la apruebe en el chat. Una vez aplicada, "
+                     "buscar_productos ya la encuentra.",
+     "parametros": _PARAM_CREAR_PRODUCTO, "funcion": _crear_producto},
     {"nombre": "registrar_checkin", "tipo": "propuesta", "nivel": "ninguno",
      "descripcion": "Propone un chequeo de 10 segundos: ánimo, energía y estrés sentido, cada uno del 1 al 5, "
                      "más una nota opcional de una línea. Pregunta solo esos tres números y esa línea -- nunca "

@@ -25,8 +25,8 @@ from fastapi.testclient import TestClient
 
 from body import (
     compartir, config, cuenta, db, dispositivo, enlaces, fechas, garmin_cuenta, goals, household,
-    identity, llave_asistente, noche_inusual, patron_turnos, practicas, privacidad, readiness,
-    recuperacion, shift_import, vida_export, web,
+    identity, llave_asistente, noche_inusual, patron_turnos, practicas, privacidad, productos as productos_mod,
+    readiness, recuperacion, shift_import, vida_export, web,
 )
 from body.agente import ajustes as agente_ajustes
 from body.agente import conversacion as agente_conversacion
@@ -328,6 +328,11 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     db.crear_comida(conn, person_id, DAYS[-1], [{"metric_key": "kcal", "amount": 500.0, "estimado": True}],
                      descripcion=f"ZZ{tag}-COMIDA")
 
+    # BODY-COMIDA-PRODUCTO-1: producto is person-keyed (ruling 1 CORRECTED) and has the picker
+    # (/comida/productos) as its FIRST reader, which renders the product's own name -- its marker
+    # belongs in _markers_of's active list below, the same treatment comida's descripcion got.
+    productos_mod.crear_producto_manual(conn, person_id, f"ZZ{tag}-PRODUCTO")
+
     # BODY-HOGAR-ESCRIBE-1-W: momento_comida is person-owned (its own person_id column, same census
     # treatment as turno_fc/recuperacion_actividad above) -- no marker needed, the census only
     # checks export/delete-all coverage, and its columns carry no free text.
@@ -452,7 +457,7 @@ def _markers_of(tag: str) -> list[str]:
             ("ACTIVIDAD", "SERIE", "TURNO", "META-PRIVADA", "HABITO", "NOTA", "META-PROPUESTA",
              "META-ARCHIVADA", "PLAN", "CONVERSACION", "MENSAJE", "DISPOSITIVO", "DISPOSITIVO-MCP",
              "EXPERIMENTO", "REGISTRO", "COMIDA", "CHECKIN-NOTA", "REGLA", "SEMANA", "META-SEMANAL",
-             "CHECKPOINT", "PRACTICA", "FASE")] + [ENLACE_REF[tag]]
+             "CHECKPOINT", "PRACTICA", "FASE", "PRODUCTO")] + [ENLACE_REF[tag]]
 
 
 def _figures_of(tag: str) -> dict:
@@ -475,6 +480,7 @@ EXPECTED_GET_PATHS = sorted([
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
     "/trends", "/shifts", "/shifts/como", "/shifts/patron",
     "/asistente/conversacion/{conversacion_id}",
+    "/comida/productos", "/comida/productos/agregar",  # BODY-COMIDA-PRODUCTO-1 ruling 4
 ])
 
 # Routes that need no identity-scoped id substitution and are safe to call plainly.
@@ -484,6 +490,7 @@ PLAIN_GET_ROUTES = [
     "/privacidad/consentimiento", "/privacidad", "/privacidad/exportar",
     "/sw.js", "/login", "/login/cuenta/start", "/login/cuenta/callback",
     "/trends", "/shifts", "/shifts/como", "/shifts/patron",
+    "/comida/productos",
 ]
 
 READ_TOOLS = ["leer_hoy", "leer_dia", "leer_como_calculo", "leer_tendencias", "leer_historia",

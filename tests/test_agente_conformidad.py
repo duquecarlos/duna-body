@@ -235,6 +235,7 @@ def _argumentos(ids: dict) -> dict:
                                "regla": {"tipos": ["running"]}},
         "corregir_despertar": {"fecha": ids["dia_sueno"], "tipo": "levantado", "hora": "07:00"},
         "registrar_altitud": {"es_casa": True, "start_day": "2020-05-20", "altitud_m": 1200},
+        "crear_producto": {"nombre": "Producto conformidad"},
     }
 
 

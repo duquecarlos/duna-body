@@ -35,7 +35,7 @@ from fastapi.testclient import TestClient
 from body import db, goals, practicas, privacidad, web
 from tests._rutas import rutas_planas
 from tests.test_cuenta_rp import CuentaRpTestCase
-from tests.test_estados_vacios import _ALWAYS_404_LOCAL, _TURNOS_GATED, STATES, TODAY, _leaks_in
+from tests.test_estados_vacios import _ALWAYS_404_LOCAL, _ALWAYS_REDIRECT, _TURNOS_GATED, STATES, TODAY, _leaks_in
 
 PERSON1_NAME = "ZZ1-PERSONA-UNO-MARCADOR"
 PERSON1_GOAL_TITLE = "ZZ1-META-UNO-MARCADOR"
@@ -78,6 +78,8 @@ def _expected_hosted(path: str, *, signed_in: bool, consented: bool, turnos_on: 
     if not signed_in:
         return {303}
     if not consented:
+        return {303}
+    if path in _ALWAYS_REDIRECT:
         return {303}
     if path in _TURNOS_GATED:
         return {200} if turnos_on else {404}

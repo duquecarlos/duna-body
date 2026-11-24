@@ -79,7 +79,7 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from .. import comida_compartida, compartir, db, desplazamiento_import, fechas, goals, household, practicas, \
-    readiness, shift_import
+    productos, readiness, shift_import
 from ..i18n import T
 from . import conversacion as agente_conversacion
 
@@ -1199,6 +1199,18 @@ def _deshacer_borrar_ingesta(conn: sqlite3.Connection, row: sqlite3.Row) -> None
 # one writer of `comida` through db.crear_comida/db.borrar_comida; apply writes the `comida` row
 # plus every one of its own `ingesta` children in one transaction, undo removes them together) ----
 
+def _productos_actuales(conn: sqlite3.Connection, comida_id: int) -> list[tuple]:
+    """A meal's own current `comida_producto` lines, as an order-independent comparison key."""
+    return sorted((r["producto_id"], float(r["cantidad"]), r["unidad"]) for r in conn.execute(
+        "SELECT producto_id, cantidad, unidad FROM comida_producto WHERE comida_id = ?", (comida_id,)))
+
+
+def _productos_esperados(lineas: list[dict]) -> list[tuple]:
+    """The same comparison key as `_productos_actuales`, for a proposal row's own recorded
+    `antes`/`despues` `productos` list."""
+    return sorted((p["producto_id"], float(p["cantidad"]), p["unidad"]) for p in lineas)
+
+
 def _drift_deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
     despues = json.loads(row["despues_json"])
     cid = despues.get("comida_id")
@@ -1210,7 +1222,14 @@ def _drift_deshacer_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row)
     cantidades_actuales = {c["metric_key"]: c["amount"] for c in conn.execute(
         "SELECT metric_key, amount FROM ingesta WHERE comida_id = ?", (cid,))}
     cantidades_despues = {c["metric_key"]: c["amount"] for c in despues["cantidades"]}
-    return cantidades_actuales != cantidades_despues
+    if cantidades_actuales != cantidades_despues:
+        return True
+    # BODY-COMIDA-PRODUCTO-1-B: the drift check covers product lines as it covers cantidades --
+    # only when THIS proposal named any (an older proposal with no `productos` key at all never
+    # had a line to compare).
+    if "productos" in despues and _productos_actuales(conn, cid) != _productos_esperados(despues["productos"]):
+        return True
+    return False
 
 
 def _drift_aplicar_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
@@ -1248,7 +1267,8 @@ def _aplicar_registrar_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> dic
         ).fetchone()
         return {"comida_id": autor_porcion["comida_id"], "comida_compartida_id": resultado["comida_compartida_id"]}
     cid = db.crear_comida(conn, row["person_id"], despues["day"], despues["cantidades"],
-                           despues.get("descripcion"), despues.get("ts_local"), despues.get("momento"))
+                           despues.get("descripcion"), despues.get("ts_local"), despues.get("momento"),
+                           productos=despues.get("productos"))
     return {"comida_id": cid}
 
 
@@ -1283,7 +1303,14 @@ def _comida_estado_coincide(conn: sqlite3.Connection, person_id: int, comida_id:
     cantidades_actuales = {r["metric_key"]: r["amount"] for r in conn.execute(
         "SELECT metric_key, amount FROM ingesta WHERE comida_id = ?", (comida_id,))}
     cantidades_esperadas = {c["metric_key"]: c["amount"] for c in estado.get("cantidades", [])}
-    return cantidades_actuales == cantidades_esperadas
+    if cantidades_actuales != cantidades_esperadas:
+        return False
+    # BODY-COMIDA-PRODUCTO-1-B: `antes` always carries a full `productos` snapshot (even an empty
+    # list); `despues` carries one only when THIS correction touched products, so its absence
+    # there means "not this correction's business" rather than "must be empty".
+    if "productos" in estado and _productos_actuales(conn, comida_id) != _productos_esperados(estado["productos"]):
+        return False
+    return True
 
 
 def _drift_aplicar_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
@@ -1300,14 +1327,54 @@ def _drift_deshacer_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) 
 def _aplicar_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     despues = json.loads(row["despues_json"])
     db.corregir_comida(conn, row["person_id"], despues["comida_id"], ts_local=despues.get("ts_local"),
-                       day=despues["day"], descripcion=despues["descripcion"], cantidades=despues["cantidades"])
+                       day=despues["day"], descripcion=despues["descripcion"], cantidades=despues["cantidades"],
+                       productos=despues.get("productos"))
 
 
 def _deshacer_corregir_comida(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
     antes = json.loads(row["antes_json"])
     despues = json.loads(row["despues_json"])
+    # BODY-COMIDA-PRODUCTO-1-B: `antes["productos"]` is always a full snapshot (ruling A's "a
+    # correction's undo puts the old lines back"), so it is passed explicitly here every time,
+    # whether or not the correction being undone itself touched products.
     db.corregir_comida(conn, row["person_id"], despues["comida_id"], ts_local=antes.get("ts_local"),
-                       day=antes["day"], descripcion=antes["descripcion"], cantidades=antes["cantidades"])
+                       day=antes["day"], descripcion=antes["descripcion"], cantidades=antes["cantidades"],
+                       productos=antes.get("productos"))
+
+
+# -- crear_producto (BODY-COMIDA-PRODUCTO-1-B ruling B: insert-shaped, like registrar_comida --
+# this module is the one writer of `producto`/`producto_nutricion` through
+# productos.crear_producto_manual/establecer_nutricion and, on undo,
+# productos.borrar_producto_manual, refused -- by both the drift check below and the writer
+# itself, the same "defense in depth" pair db.borrar_experimento/proponer_experimento already
+# use -- once any meal names the product in `comida_producto`) --------------------------------
+
+def _drift_deshacer_crear_producto(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    despues = json.loads(row["despues_json"])
+    producto_id = despues.get("producto_id")
+    return conn.execute(
+        "SELECT 1 FROM comida_producto WHERE producto_id = ? LIMIT 1", (producto_id,)
+    ).fetchone() is not None
+
+
+def _aplicar_crear_producto(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    despues = json.loads(row["despues_json"])
+    producto_id = productos.crear_producto_manual(
+        conn, row["person_id"], despues["nombre"], marca=despues.get("marca"),
+        tamano_neto=despues.get("tamano_neto"), tamano_unidad=despues.get("tamano_unidad"))
+    nutrientes = despues.get("nutrientes") or {}
+    if nutrientes:
+        basis = {"g": "100g", "ml": "100ml", "unidad": "unidad"}[despues["tamano_unidad"]]
+        for metric_key, amount in nutrientes.items():
+            productos.establecer_nutricion(conn, producto_id, metric_key, amount, basis, "etiqueta")
+    return {"producto_id": producto_id}
+
+
+def _deshacer_crear_producto(conn: sqlite3.Connection, row: sqlite3.Row) -> None:
+    despues = json.loads(row["despues_json"])
+    producto_id = despues.get("producto_id")
+    if producto_id is not None:
+        productos.borrar_producto_manual(conn, row["person_id"], producto_id)
 
 
 # -- registrar_checkin (BODY-CHECKIN-1: insert-shaped, like registrar_comida -- this module is the
@@ -1869,6 +1936,8 @@ TABLA: dict[str, _Accion] = {
                                  _aplicar_registrar_comida, _deshacer_registrar_comida),
     "corregir_comida": _Accion(_drift_aplicar_corregir_comida, _drift_deshacer_corregir_comida,
                                 _aplicar_corregir_comida, _deshacer_corregir_comida),
+    "crear_producto": _Accion(_sin_drift, _drift_deshacer_crear_producto,
+                               _aplicar_crear_producto, _deshacer_crear_producto),
     "registrar_checkin": _Accion(_sin_drift, _drift_deshacer_registrar_checkin, _aplicar_registrar_checkin,
                                   _deshacer_registrar_checkin),
     "registrar_altitud": _Accion(_sin_drift, _drift_deshacer_registrar_altitud, _aplicar_registrar_altitud,

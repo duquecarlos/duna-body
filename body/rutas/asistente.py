@@ -1021,6 +1021,17 @@ def _tarjeta_corregir_despertar(t: T, defs: dict, despues: dict, antes_json: dic
     return None, despues_txt, None
 
 
+def _tarjeta_crear_producto(t: T, defs: dict, despues: dict, antes_json: dict | None, conn,
+                             person_id: int) -> tuple:
+    """BODY-COMIDA-PRODUCTO-1-B: create-only (no `antes`) -- just the product's own name and
+    brand, exactly how the picker's own product list joins them (body/templates/
+    comida_productos.html's "{{ nombre }} · {{ marca }}"), never the nutrition figures: those
+    only show once the product is actually saved."""
+    nombre = despues["nombre"]
+    marca = despues.get("marca")
+    return None, f"{nombre} · {marca}" if marca else nombre, None
+
+
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/
 # propuestas.py's TABLA and body/agente/herramientas.py's `propuesta`-kind tools
 # (tests/test_propuestas_tabla.py enforces the three sets match). Each builder returns
@@ -1043,6 +1054,7 @@ TARJETAS = {
     "borrar_ingesta": _tarjeta_borrar_ingesta,
     "registrar_comida": _tarjeta_registrar_comida,
     "corregir_comida": _tarjeta_corregir_comida,
+    "crear_producto": _tarjeta_crear_producto,
     "registrar_checkin": _tarjeta_registrar_checkin,
     "registrar_altitud": _tarjeta_registrar_altitud,
     "marcar_periodo": _tarjeta_marcar_periodo,

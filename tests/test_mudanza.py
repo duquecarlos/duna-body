@@ -13,7 +13,7 @@ from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import backup, config, cuenta, db, mudanza, privacidad
+from body import backup, config, cuenta, db, mudanza, privacidad, productos as productos_mod
 
 CUENTA_SUB = "sub-mudanza-test-1"
 NOW = "2026-11-01T08:00:00+00:00"
@@ -1035,6 +1035,85 @@ class PracticaMudanzaTest(MudanzaTestCase):
         self.assertEqual(by_name["practica"].counts.insert, 0)
         dest = db.connect()
         self.assertEqual(dest.execute("SELECT COUNT(*) FROM practica").fetchone()[0], 1)
+
+
+class ProductoMudanzaTest(MudanzaTestCase):
+    """BODY-COMIDA-PRODUCTO-1-D: a person's own manual product, its nutrition row and a meal
+    naming it all move with them, every surrogate id remapped, a second import never duplicating
+    any of the three new tables."""
+
+    def test_product_nutrition_and_meal_line_move_with_remapped_ids(self):
+        # A decoy product and meal for an unrelated person, already on the host, so the
+        # destination's own autoincrement ids diverge from the source ids -- proving the FKs below
+        # were really REMAPPED, not merely copied through by coincidence (the same technique
+        # ApplyTest's own goal/habit test above uses).
+        decoy = self._dest_conn()
+        with decoy:
+            decoy.execute("INSERT INTO person (id, display_name) VALUES (777, 'Other host person')")
+            decoy.execute(
+                "INSERT INTO producto (person_id, origen, nombre, created_at) VALUES "
+                "(777, 'manual', 'Decoy', ?)", (NOW,))
+            decoy.execute(
+                "INSERT INTO comida (person_id, day, created_at, updated_at) VALUES "
+                "(777, '2026-10-01', ?, ?)", (NOW, NOW))
+        decoy.close()
+
+        source = self._new_source()
+        producto_id = productos_mod.crear_producto_manual(
+            source, db.DEFAULT_PERSON_ID, "Yogur griego", marca="ZZ-Marca",
+            tamano_neto=150, tamano_unidad="g")
+        productos_mod.establecer_nutricion(source, producto_id, "kcal", 97, "100g", "etiqueta")
+        comida_id = db.crear_comida(
+            source, db.DEFAULT_PERSON_ID, "2026-10-05", [{"metric_key": "kcal", "amount": 145.5,
+                                                            "estimado": False}],
+            "yogur", "2026-10-05T08:00:00",
+            productos=[{"producto_id": producto_id, "cantidad": 150, "unidad": "g"}])
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = self._reports_by_name(reports)
+        self.assertEqual(by_name["producto"].counts.insert, 1)
+        self.assertEqual(by_name["producto_nutricion"].counts.insert, 1)
+        self.assertEqual(by_name["comida_producto"].counts.insert, 1)
+
+        dest = db.connect()
+        person_id = dest.execute("SELECT id FROM person WHERE cuenta_sub = ?", (CUENTA_SUB,)).fetchone()[0]
+        dest_producto = dest.execute(
+            "SELECT id, nombre, marca FROM producto WHERE person_id = ?", (person_id,)
+        ).fetchone()
+        self.assertIsNotNone(dest_producto)
+        self.assertNotEqual(dest_producto["id"], producto_id)  # re-keyed, not copied verbatim
+        self.assertEqual((dest_producto["nombre"], dest_producto["marca"]), ("Yogur griego", "ZZ-Marca"))
+
+        dest_nutricion = dest.execute(
+            "SELECT producto_id, metric_key, amount_per, basis, fuente FROM producto_nutricion"
+        ).fetchone()
+        self.assertEqual(dest_nutricion["producto_id"], dest_producto["id"])
+        self.assertEqual((dest_nutricion["metric_key"], dest_nutricion["amount_per"], dest_nutricion["basis"],
+                           dest_nutricion["fuente"]), ("kcal", 97, "100g", "etiqueta"))
+
+        dest_comida = dest.execute("SELECT id FROM comida WHERE person_id = ?", (person_id,)).fetchone()
+        self.assertNotEqual(dest_comida["id"], comida_id)  # re-keyed, not copied verbatim
+        dest_linea = dest.execute(
+            "SELECT comida_id, producto_id, cantidad, unidad FROM comida_producto"
+        ).fetchone()
+        self.assertEqual(dest_linea["comida_id"], dest_comida["id"])
+        self.assertEqual(dest_linea["producto_id"], dest_producto["id"])
+        self.assertEqual((dest_linea["cantidad"], dest_linea["unidad"]), (150, "g"))
+        dest.close()
+
+        reports2, ok2 = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok2)
+        by_name2 = self._reports_by_name(reports2)
+        self.assertEqual(by_name2["producto"].counts.insert, 0)
+        self.assertEqual(by_name2["producto_nutricion"].counts.insert, 0)
+        self.assertEqual(by_name2["comida_producto"].counts.insert, 0)
+        dest = db.connect()
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM producto WHERE person_id = ?",
+                                       (person_id,)).fetchone()[0], 1)
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM producto_nutricion").fetchone()[0], 1)
+        self.assertEqual(dest.execute("SELECT COUNT(*) FROM comida_producto").fetchone()[0], 1)
 
 
 class HabitPracticaIdMudanzaTest(MudanzaTestCase):
