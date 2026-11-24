@@ -139,11 +139,6 @@ class DetalleHistoriaActionTest(unittest.TestCase):
     def test_cuenta_sub_is_required(self):
         self.assertIn("detalle-historia requires --cuenta-sub", self._body())
 
-    def test_runs_as_data_user_via_runuser(self):
-        body = self._body()
-        self.assertIn('runuser -u "$DATA_USER"', body)
-        self.assertIn("body.detalle_historia", body)
-
     def test_dry_run_and_max_flags_are_forwarded_when_given(self):
         body = self._body()
         self.assertIn("--dry-run", body)
@@ -154,6 +149,89 @@ class DetalleHistoriaActionTest(unittest.TestCase):
         self.assertNotIn("systemctl", body)
         self.assertNotIn("body-backup.sh", body)
         self.assertNotIn("body.backup snapshot", body)
+
+
+class DetalleHistoriaSystemdRunTest(unittest.TestCase):
+    """BODY-DETALLE-HISTORIA-1-B: the live run stopped on a missing BODY_TOKEN_KEY because
+    runuser alone never loaded /srv/duna/env/body.env. The arm now runs as a transient unit
+    carrying the same properties as body-pull.service, so the two can never drift apart."""
+
+    PULL_SERVICE = HOST_DIR / "body-pull.service"
+    NON_HARDENING_KEYS = {
+        "Type", "User", "EnvironmentFile", "Environment", "WorkingDirectory", "ExecStart",
+        "Description", "After", "Wants",
+    }
+
+    def setUp(self):
+        self.text = _read(IMPORT)
+        start = self.text.index("detalle-historia)")
+        end = self.text.index("\n  importar-pc)", start)
+        self.body = self.text[start:end]
+        self.service_text = _read(self.PULL_SERVICE)
+
+    def _service_hardening(self):
+        in_service = False
+        for line in self.service_text.splitlines():
+            stripped = line.strip()
+            if stripped == "[Service]":
+                in_service = True
+                continue
+            if stripped.startswith("[") and in_service:
+                break
+            if in_service and "=" in stripped:
+                key, _, value = stripped.partition("=")
+                key = key.strip()
+                if key in self.NON_HARDENING_KEYS:
+                    continue
+                yield key, value.strip()
+
+    def test_uses_systemd_run_not_runuser(self):
+        self.assertIn("systemd-run", self.body)
+        self.assertIn("--wait", self.body)
+        self.assertIn("--pipe", self.body)
+        self.assertIn("--collect", self.body)
+        self.assertIn("--quiet", self.body)
+        self.assertNotIn("exec runuser", self.body)
+
+    def test_uid_matches_data_user(self):
+        self.assertIn('--uid="$DATA_USER"', self.body)
+
+    def test_environment_file_matches_pull_service(self):
+        self.assertIn("--property=EnvironmentFile=/srv/duna/env/body.env", self.body)
+
+    def test_body_home_matches_data_dir(self):
+        self.assertIn('--setenv="BODY_HOME=$DATA_DIR"', self.body)
+
+    def test_working_directory_matches_repo_dir(self):
+        self.assertIn('--working-directory="$REPO_DIR"', self.body)
+
+    def test_every_hardening_key_from_pull_service_present(self):
+        found_any = False
+        for key, value in self._service_hardening():
+            found_any = True
+            if value == "/srv/duna/data/body":
+                expected = f'--property={key}="$DATA_DIR"'
+            else:
+                expected = f"--property={key}={value}"
+            self.assertIn(expected, self.body, f"hardening property {key} missing or drifted")
+        self.assertTrue(found_any, "body-pull.service has no hardening lines to compare against")
+
+    def test_env_file_never_sourced_cat_or_dotted(self):
+        self.assertNotIn("source /srv/duna/env/body.env", self.body)
+        self.assertNotIn(". /srv/duna/env/body.env", self.body)
+        self.assertNotIn("cat /srv/duna/env/body.env", self.body)
+
+    def test_runs_module_with_forwarded_args(self):
+        self.assertIn("body.detalle_historia", self.body)
+        self.assertIn('"${DETALLE_HISTORIA_ARGS[@]}"', self.body)
+
+    def test_refuses_clearly_when_systemd_run_absent_no_fallback(self):
+        check_idx = self.body.index("command -v systemd-run")
+        exec_idx = self.body.index("exec systemd-run")
+        self.assertLess(check_idx, exec_idx)
+        refusal = self.body[check_idx:exec_idx]
+        self.assertIn("refused", refusal)
+        self.assertIn("exit 1", refusal)
 
 
 class RelinkarGarminActionTest(unittest.TestCase):

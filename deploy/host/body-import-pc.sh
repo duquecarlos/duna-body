@@ -125,7 +125,25 @@ case "$action" in
     if [[ -n "$DETALLE_HISTORIA_MAX" ]]; then
       DETALLE_HISTORIA_ARGS+=(--max "$DETALLE_HISTORIA_MAX")
     fi
-    exec runuser -u "$DATA_USER" -- env -C "$REPO_DIR" "BODY_HOME=$DATA_DIR" \
+    # BODY-DETALLE-HISTORIA-1-B: runuser alone never loaded /srv/duna/env/body.env, so the first
+    # live run stopped on a missing BODY_TOKEN_KEY. A transient unit carrying the SAME properties
+    # as body-pull.service (EnvironmentFile, uid, BODY_HOME, working directory, hardening) cannot
+    # drift from the scheduled pull's own environment -- never sourced, cat'ed or printed.
+    if ! command -v systemd-run >/dev/null 2>&1; then
+      echo "body-import-pc.sh: refused -- systemd-run not found; detalle-historia requires the same environment as the scheduled pull" >&2
+      exit 1
+    fi
+    exec systemd-run --wait --pipe --collect --quiet \
+      --uid="$DATA_USER" \
+      --property=EnvironmentFile=/srv/duna/env/body.env \
+      --setenv="BODY_HOME=$DATA_DIR" \
+      --working-directory="$REPO_DIR" \
+      --property=NoNewPrivileges=yes \
+      --property=ProtectSystem=strict \
+      --property=ProtectHome=yes \
+      --property=ReadWritePaths="$DATA_DIR" \
+      --property=PrivateTmp=yes \
+      --property=UMask=0077 \
       "$REPO_DIR/.venv/bin/python" -m body.detalle_historia "${DETALLE_HISTORIA_ARGS[@]}"
     ;;
   importar-pc)
