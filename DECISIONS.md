@@ -35087,3 +35087,39 @@ clean. Not deployed.
 `corto`-band first factor for a 7-day gap) -- a one-line test fix, no production code, so it can run in whatever
 tier fits `tests/test_agente_propuestas.py` under this repo's own touches discipline.
 
+## BODY-REENTRADA-ESCALA-1-B
+
+Continuation of BODY-REENTRADA-ESCALA-1, the merge step. Inherited `feat/body-reentrada-escala-1` at `e3d15c7`,
+clean, the build DONE -- not rebuilt.
+
+**The test fix.** `tests/test_agente_propuestas.py::EstadoYEventosTest::test_planear_entreno_card_says_why_after_a_gap`
+kept its subject (the proposal card's own one-line reason, worded from the stored signal) and had its pinned
+7-day-gap figure updated from reentrada-v1's "volumen al 60 %." to reentrada-v2's own `corto`-band first factor,
+"volumen al 90 %." -- the same fix `tests/test_plan_hoy.py` already carried for the same fixture shape. A sibling
+test, `test_planear_entreno_card_says_why_after_a_long_gap`, was added alongside it: a 30-day gap (the `largo`
+band), pinning "volumen al 60 %." for its own first session -- so the test file now pins BOTH bands rather than
+only the short one, and no assertion was weakened or deleted. `git grep -n "volumen al" -- tests` afterward shows
+only these two lines plus `tests/test_plan_hoy.py`'s own, all v2 figures; `git grep -n "reentrada-v1\|factores\|0.6" --
+tests` shows only `tests/test_reentrada.py`'s own intentional `largo`-band (0.6) coverage and unrelated matches in
+other test files (buscar_noches, esfuerzo_sesion, tendencias_todas), nothing left pinned to v1.
+
+Committed on `feat/body-reentrada-escala-1` as `bf851c2423605282956f989564895cc01d3638e8` before the whole gate.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 19 foreground chunks on the final
+tree (15-17 modules per ordinary chunk, the 9 `test_garmin_*` modules in 2 chunks of 5 and 4, the 6 `test_host_*`-
+adjacent modules -- `test_hogar_registrar_idempotente`, `test_horizonte` and the 4 `test_host_*` proper -- in one
+chunk of 6). Per-chunk counts: 329, 308, 388, 273, 352, 171, 70, 143, 367, 302, 280, 439, 382, 414, 394, 239, 357,
+365, 150 -- summing to **5723**. Reconciled against an independent `unittest.TestLoader().discover('tests',
+top_level_dir='.')` collect-only count on the same tree, which also returned **5723** -- exact match (5722 from
+the prior slice's own floor, plus the one test added here). Every chunk OK, no failures, no errors; the one
+`expectedFailure` and one `skip` already known from earlier runs reappeared as such, not as reds.
+
+**Merge.** No customer-facing string changed (the existing `today.dia.reentrada` / `asistente.propuesta.reentrada`
+template `"Vuelta tras {dias} días sin fuerza: sesión {n}, volumen al {pct} %."` carries the new factor as data,
+unchanged itself), no schema or migration, no cross-repo contract -- merge policy A's three conditions all clear.
+`git checkout main`; `git merge --no-ff feat/body-reentrada-escala-1` -> merge commit
+`458e978806b12027eb2e0d0e7ef7baa70e82409e`. Tree identity: the branch tip's own tree
+(`git rev-parse bf851c2^{tree}`) and the merge commit's own tree (`git rev-parse HEAD^{tree}`) are BOTH
+`de81e0e40a31f73eaad510b28e73c603e0416126` -- proven identical, no re-run needed past that check. Branch
+`feat/body-reentrada-escala-1` deleted (`git branch -d`). Not deployed, not pushed.
+
