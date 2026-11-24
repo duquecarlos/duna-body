@@ -34707,3 +34707,94 @@ fe3fa57423522721e5f1b114319c5048323c6bcf) -- tree identity proven: merge tree
 `/day/2026-11-22/entreno/demo-2026-11-22-1`, where the answered card now reads "Buena energia
 (4 de 5)" / "Good energy (4 of 5)" instead of the bare "4".
 
+## BODY-DETALLE-HISTORIA-1 -- a 404 is not a transient failure, and a manual paced backfill over the whole history (2026-11-23)
+
+Carlos, relayed by the desk: he has far more than the roughly two earlier basketball activities that had full Garmin
+detail stored, and asked how many there are across the whole history. The preceding investigation slice found two
+root causes: the scheduled pull only ever asks for activity detail inside the last 90 days, and a Garmin 404 for one
+old activity was stored as nothing at all (no marker), so `db.actividades_sin_detalle` re-selected that same gone
+activity on every scheduled run, forever.
+
+**Ruling 1 -- tell a 404 apart from a transient failure, once.** `body/garmin_adapter.py` (Tier 1; the only module
+that imports `garminconnect`) gains `detalle_no_disponible(nombre_error: str) -> bool`, comparing the given error
+*class name* against `GarminConnectNotFoundError.__name__` alone -- no second, hand-typed literal, no new Garmin
+call, no new endpoint. `GarminConnectNotFoundError` subclasses `GarminConnectConnectionError`, so before this helper
+a 404 was never told apart from a genuine connection failure.
+
+**Ruling 2 -- store the empty marker for a 404, surface everything else.** `pull.traer_detalle_actividad` now stores
+the existing `{}` marker for any kind whose error is a 404 (via ruling 1), and returns the kinds it could *not*
+resolve -- a transient 429, a 5xx, a timeout, or any other class -- as a `{class name: count}` dict, inserted as the
+middle element of its return tuple (`stored, fallidas` locally; `stored, fallidas, token_after` hosted) so every
+existing caller keeps working once it unpacks one more value. `_pull_detalle_pendientes` (the scheduled path) was
+updated for the new shape, which is what actually stops it from re-asking for a gone activity forever: a 404'd kind
+now gets its marker on the very first scheduled attempt. No schema change; the marker was already `db.
+guardar_detalle_actividad(..., kind, {})`. Accepted risk, not built: a 404 marker is permanent even if Garmin later
+gets the data back (follow-up `BODY-DETALLE-RECHEQUEO-1`).
+
+**Ruling 3 -- a manual, paced backfill over the whole history.** `pull.traer_detalle_historia(conn, person_id, *,
+token_str, max_actividades, pausa_s=PAUSE_S)` selects via `db.actividades_sin_detalle` with no day floor, reuses the
+hosted trio unchanged (`garmin_cuenta.leer`/`guardar` for the token, `privacidad.guarda_detalle` as the consent gate,
+`traer_detalle_actividad` for the call and the store -- never the local TOKEN_DIR shortcut), and orders the
+selection by a priority list kept as data in the same shape as `checkin_sesion._CONJUNTOS`
+(`pull._PRIORIDAD_HISTORIA`: basketball, then soccer, then strength, then everything else, matched by Garmin type
+code or by `entreno_sesion._normaliza_nombre`-folded name when the type is "other"; newest first within each group,
+which falls out for free since `actividades_sin_detalle` already returns newest-first). It sleeps `pausa_s` between
+activities, stops at `max_actividades`, and stops at the first transient failure or `garmin_adapter.NotSignedIn`,
+recording the stop through the existing `_registrar_intento_persona` (one account, one backoff -- `FeedsFallidos`
+reused purely as its `{class name: count}` carrier). It holds the same pull lock the timers use and refuses with a
+counts-only line if another pull already holds it. Resumable with no new marker: a later run just selects whatever
+is still pending.
+
+**Ruling 4 -- the CLI.** `body/detalle_historia.py` (new), mirroring `body/cobertura.py`'s shape: resolves the
+person by `--cuenta-sub`, takes `--dry-run` (makes no Garmin call) and `--max N` (default 20, 1-200, else refused
+before any connection opens). Prints a before table and, on a live run, an after table: rows are priority group x
+calendar month, columns are `con_detalle` / `garmin_no_tiene` / `pendientes`, read directly off the `activity` /
+`activity_detail` tables with `conn.execute(...)` (the same precedent `cobertura.py` already set, since `db.py` is
+not in this slice's `touches`); a live run also prints this run's `fallidas_transitorias` and the stop reason. Only
+counts, group names and months are ever printed -- never a figure, a `source_id` or an activity name. The last line
+names the oldest month with `con_detalle` and the newest month with `garmin_no_tiene`.
+
+**Ruling 5 -- the host verb.** `detalle-historia --cuenta-sub <sub> [--dry-run] [--max N]` added to `deploy/host/
+duna-deploy-body` (usage line, case arm with `--max` range-checked in bash before dispatch, exec dispatch) and
+`deploy/host/body-import-pc.sh` (case arm forwarding to `python -m body.detalle_historia`), copying `cobertura`'s
+verb exactly -- runs as the data user via `runuser`, never as root, no sudoers change.
+
+**Tests** (within `touches:`): `tests/test_entreno_detalle.py` gains `DetalleNoDisponibleTest` (404 is unavailable;
+`GarminConnectTooManyRequestsError` is not; a plain `GarminConnectConnectionError` is not, since the 404 class
+subclasses it; an unrelated class name is not). `tests/test_pull.py`: the existing activity-detail tests updated for
+the new return shape, plus a 404-stores-the-marker test and a transient-does-not-store-and-is-counted test, and a
+new `TraerDetalleHistoriaTest` (no-consent makes no call; no pending activities returns immediately; a held lock
+refuses with counts only and makes no call; priority order across all four groups, newest first within each; the
+`--max` cap; the pause between activities but not before the first; stop-on-first-transient-failure with counts so
+far; stop-on-`NotSignedIn`; the refreshed token persisted). `tests/test_detalle_historia.py` (new): dry-run makes no
+Garmin call and prints only counts/group-names/months; `--max` of 0 or 201 refused before any connection opens; a
+live run with no stored token refuses; a live run prints the after table and the stop reason; an unknown
+`--cuenta-sub` refuses. `tests/test_deploy_host.py` and `tests/test_host_import.py`: the verb's usage line, case
+arm, `--max` range validation, exec/`runuser` dispatch, and that it touches no timer and takes no backup, plus the
+existing no-literal-`carlos` guard re-checked against the new text.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 19 chunks (full-size chunks of ~15
+modules, chunks of 4-5 for `test_garmin_*`, `test_host_*`, and `test_guardia_parches` on its own, which takes
+several minutes by itself scanning every test file against every `body/` file), covering all 246 `tests/test_*.py`
+modules exactly once (244 pre-existing plus the new `test_detalle_historia.py`, counted individually because the
+new module's methods raised the total). Per-chunk counts summed to **5612**, reconciled against an independent
+`unittest.TestLoader().discover('tests', top_level_dir='.')` collect-only count, which also returned **5612** --
+exact match. (BODY-PARTIDO-2-ESCALA-1's own floor was 5582; the 30-test rise is this slice's new tests.) One
+pre-existing expected failure and one pre-existing skip, neither a regression; every chunk otherwise OK.
+
+**Merge.** Diff: no schema/migration change (no `db.py` touch), no cross-repo contract change, no customer-facing
+bytes (an operator-only host verb and two Python modules with no template, no i18n string). Merge policy A's
+conditions are met; the spec's own WHAT TO DO step 4 says "YOU MAY MERGE". `git checkout main`; `git merge --no-ff
+feat/body-detalle-historia-1` (slice commit b2d93951288c5570d6464d312e58db33ac369359 onto `main`, merge commit
+bca1d031b5cfbfda7bfa4996ccac1624fd9c74c2) -- tree identity proven: merge tree
+53bb63f1f288fd0648b5aa740de47454cc371ee8 equals branch tree 53bb63f1f288fd0648b5aa740de47454cc371ee8, `git diff`
+between the branch commit and the merge commit empty. Branch deleted; `body-app` on `main`, clean.
+
+**Follow-ups, named, not built.** `BODY-DETALLE-RECHEQUEO-1`: a 404 marker is permanent even if Garmin later
+restores the data for that activity; decide whether and how often to re-check a `garmin_no_tiene` kind.
+`BODY-DETALLE-ALCANCE-MEDIR-1`: measure, after a real backfill run, how large the whole-history gap actually was
+(how many activities, which months) now that `detalle_historia`'s before/after tables can show it, to size any
+further work. `BODY-DETALLE-HISTORIA-TIMER-1`: consider whether the scheduled pull should also run a slow trickle
+of `traer_detalle_historia` on its own timer, instead of only ever being invoked by hand through the CLI or the
+host verb.
+
