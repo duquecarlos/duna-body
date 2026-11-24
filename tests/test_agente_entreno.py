@@ -163,8 +163,9 @@ class PlanearEntrenoSenalesTest(unittest.TestCase):
             "ejercicios": [{"ejercicio": "press banca", "series": 5, "categoria": "pecho"}],
         }, "ninguno", self.cid)
         despues = _despues(self.conn, out["propuesta_id"])
-        self.assertEqual(despues["ejercicios"][0]["series"], 3)  # round(5 * 0.6)
-        self.assertEqual(despues["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.6})
+        self.assertEqual(despues["ejercicios"][0]["series"], 4)  # round(5 * 0.9) -> round(4.5) -> 4
+        self.assertEqual(despues["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.9,
+                                                 "escalon": "corto", "dias_activos_en_brecha": 0})
         self.assertNotIn("tras_carga", despues)
 
     def test_tras_carga_quita_los_ejercicios_de_pierna_y_deja_los_demas(self):
@@ -650,7 +651,8 @@ class LeerHoySenalesTest(unittest.TestCase):
         _insert_activity(self.conn, 1, "a0", "2026-10-01")  # 7 days before the latest day with data
         self.conn.commit()
         out = herramientas.ejecutar(self.conn, 1, "leer_hoy", {}, "completo")
-        self.assertEqual(out["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.6})
+        self.assertEqual(out["reentrada"], {"dias_sin_fuerza": 7, "sesion_n": 1, "factor": 0.9,
+                                             "escalon": "corto", "dias_activos_en_brecha": 0})
         self.assertNotIn("tras_carga", out)
 
     def test_ninguna_clave_cuando_no_aplican(self):

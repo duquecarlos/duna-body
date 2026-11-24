@@ -35019,3 +35019,71 @@ proven: merge tree 10f269dfd3aef26d02ef0e8412e5b82f60e1eebb equals branch tree
 10f269dfd3aef26d02ef0e8412e5b82f60e1eebb, `git diff` between the branch commit and the merge commit empty. Branch
 deleted; `body-app` on `main`, clean. Not deployed (deploy follows Carlos's standing go, per the approval reason).
 
+## BODY-REENTRADA-ESCALA-1 -- the ramp scales with the gap's own length (reentrada-v2), BLOCKED before merge (2026-11-24)
+
+The Personal desk's own 2026-11-24 flag, on Carlos's re-entry after 10 days without strength: `body/reentrada.py`'s
+`MODELO` (reentrada-v1) applied the SAME ramp (`factores: [0.6, 0.8, 1.0]`) to any gap of `gap_dias: 7` days or
+more, so a 10-day gap and a six-week gap both started at 60 % volume. Carlos's own words, relayed: "ten days does
+not cost strength; the usual return after one to two weeks is the same weights, about one set fewer, stopping 1-2
+reps short of failure." Not Tier 1 (ORCH-CARLOS-DELEGATES-TIER-1-1): a versioned model change in `body/reentrada.py`,
+the factor table moving from one ramp to one ramp per gap band, kept as data.
+
+**Ruling 1 (`body/reentrada.py`).** `MODELO['factores']` becomes `MODELO['escalones']`, a list of
+`{desde_dias, hasta_dias (None = open-ended), nombre, factores}`: 7-14 days `corto` `[0.9, 1.0]`, 15-28 days
+`medio` `[0.75, 0.9, 1.0]`, 29+ days `largo` `[0.6, 0.8, 1.0]` (reentrada-v1's own original ramp, now reserved for
+a gap this long). `gap_dias` stays 7, the first band's own `desde_dias`. A new `_escalon(gap)` picks the band the
+ORIGINAL gap's own length falls into, once, the first time the walk finds a qualifying gap; `_reentrada` then
+reads that band's own `factores` by session number exactly as reentrada-v1 read its single list. `VERSION` becomes
+`reentrada-v2`.
+
+**Ruling 2 (context, never the factor).** A qualifying `reentrada` signal gains `escalon` (the band's `nombre`)
+and `dias_activos_en_brecha`: the count of days strictly between the last strength session and the day training
+resumed that had ANY activity logged, from the person's own activity rows, through a new `_dias_activos_en_brecha`.
+Context only -- it never changes the factor: strength detraining follows the strength stimulus, and a ball game or
+a walk does not load the same lifts a strength ramp is about. Hoy's own readiness already carries its own signal
+for that, next to this one.
+
+**Ruling 3 (`body/agente/herramientas.py`).** The `leer_hoy`, `leer_dias_libres` and `planear_entreno` tool
+descriptions now explain the per-band behaviour to the assistant: a `corto` gap keeps the usual weights, about one
+set fewer, stopping 1-2 reps short of failure; a `medio` or `largo` gap lowers the volume by the suggested
+`factor`. Each also names `dias_activos_en_brecha` as context that never changes the factor. Assistant-facing tool
+specs, never customer-facing bytes -- `asistente.propuesta.reentrada` / `today.dia.reentrada` (body/i18n/es.json:
+285, 1358, body/rutas/asistente.py:317-319, body/rutas/hoy.py:364-367) needed no edit: both already render
+`{pct}` straight from the stored `factor`, so a `corto` gap's own 0.9 now renders "volumen al 90 %" with no
+template change.
+
+**Tests (`tests/test_reentrada.py`, `tests/test_agente_entreno.py`, `tests/test_plan_hoy.py`).** A new
+`EscalonesBandaTest` covers each band's first and second session factor at its own edges -- 7, 14, 15, 28, 29 and
+60 days -- plus the Personal desk's own 10-day case (0.9, then 1.0, which `senales` omits as "no key" rather than
+ever saying "1.0" out loud) and a case asserting `dias_activos_en_brecha` counts activity in the gap without
+changing the factor. `ModeloCensoTest` now pins the `escalones` table and `reentrada-v2`. The existing assertions
+that pinned `0.6` for a 7-day gap (`tests/test_reentrada.py`'s own ramp test, `tests/test_agente_entreno.py`'s
+`LeerHoySenalesTest`/`PlanearEntrenoSenalesTest`, `tests/test_plan_hoy.py`'s planned-session-line text) were
+updated to the new table's own `0.9` (and `round(5 * 0.9)` -> `round(4.5)` -> `4`, Python's banker's rounding, not
+`5`) -- never weakened, each keeps its own subject. `tests/test_rendimiento.py` needed no change: its own
+`PlanearEntrenoReentradaCostTest` exercises the no-signal and `tras_carga` paths only, neither of which reaches
+the new `dias_activos_en_brecha` query.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 12 chunks on the final tree (10
+chunks of 16-25 of the 242 ordinary `tests/test_*.py` modules, the 9 `test_garmin_*` modules in 2 chunks of 4-5,
+the 4 `test_host_*` modules in 1 chunk of 4). Per-chunk counts summed to **5722**, reconciled against an
+independent `unittest.TestLoader().discover('tests', top_level_dir='.')` collect-only count on the same tree,
+which also returned **5722** -- exact match.
+
+**STOP, BLOCKED before merge.** One red, outside this slice's own `touches`: `tests/test_agente_propuestas.py:583`
+(`EstadoYEventosTest.test_planear_entreno_card_says_why_after_a_gap`) asserts the SAME 7-day-gap proposal-card
+text this slice's own `tests/test_plan_hoy.py` fixed, still pinned to reentrada-v1's own "volumen al 60 %." --
+under reentrada-v2 the same fixture now renders "volumen al 90 %." (the `corto` band's own first factor), so that
+one assertion goes red. `touches:` named `tests/test_reentrada.py`, `tests/test_agente_entreno.py`,
+`tests/test_plan_hoy.py` and `tests/test_rendimiento.py` only -- `tests/test_agente_propuestas.py` is not
+approval's to widen from inside the slice. The fix is a one-line string update, same shape as the
+`tests/test_plan_hoy.py` fix already made, left undone pending either a widened `touches` or its own follow-up
+slice. Every change inside `touches` is committed on `feat/body-reentrada-escala-1`
+(`4644af393d164eeafc714c4a10a60bb7efa1a4ac`); branch NOT merged, NOT deleted; `body-app` left on that branch,
+clean. Not deployed.
+
+**Follow-up, named, not built.** `BODY-REENTRADA-ESCALA-1-PROPUESTAS-TEXTO`: update
+`tests/test_agente_propuestas.py:583`'s pinned "volumen al 60 %." to "volumen al 90 %." (reentrada-v2's own
+`corto`-band first factor for a 7-day gap) -- a one-line test fix, no production code, so it can run in whatever
+tier fits `tests/test_agente_propuestas.py` under this repo's own touches discipline.
+
