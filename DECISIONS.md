@@ -34975,3 +34975,47 @@ c2e71c4a2b4fb442024c5d6cecda2723cd584a50 equals branch tree c2e71c4a2b4fb442024c
 between the branch commit and the merge commit empty. Branch deleted; `body-app` on `main`, clean. Not deployed
 (deploy follows Carlos's standing go after measurement at 375 px, per the approval reason).
 
+## BODY-PREPARACION-PARTE-DIA-1 -- each readiness part says which day its value came from, merged (2026-11-24)
+
+The Personal desk's own 2026-11-24 flag: `leer_hoy`'s readiness breakdown serialises each part's `valor` with no
+day, so a reader sees the stress part's value (ON PURPOSE yesterday's full-day stress_avg, body/readiness.py:82-110)
+beside today's own partial `valores.stress_avg` and reads it as a mismatch. Not a score bug (ORCH-CARLOS-DELEGATES-
+TIER-1-1).
+
+**Ruling 1 (body/readiness.py).** `Part` gains `day` (ISO date): the day `value` was actually read from. `compute()`
+already reads stress from `yesterday` and every other part from the score's own `day` -- the new field just carries
+what was already true. No change to the score, the weights or `VERSION`.
+
+**Ruling 2 (body/agente/herramientas.py).** `_readiness_dict` adds `"dia_dato": p.day` to each serialised part.
+`leer_hoy`'s own tool description gains one clause: each part's value is from `dia_dato`, and stress is yesterday's
+full day, not today's so-far figure -- an assistant-facing tool spec, never a customer string.
+
+**Tests.** `tests/test_readiness.py`: a new case asserts the stress part's `day` is the day before and every other
+part's `day` is the score's own day; the two lector-equality harnesses that compare `Part` tuples field by field
+(`tests/test_readiness.py`'s `ReadinessLectorEqualityTest`, `tests/test_rendimiento_turnos.py`'s
+`ReadinessStripEqualityTest`) widen their tuples to include `p.day`, so the reader-backed path is checked against
+it too. `tests/test_agente_entreno.py` adds a case asserting every part of `leer_hoy`'s `listo.partes` carries a
+non-null `dia_dato`. `tests/test_agente_bucle.py` and `tests/test_mcp.py` needed no change -- neither asserts an
+exhaustive key set over the parts.
+
+**Sample (invented, never real data).** One part of `leer_hoy`'s `listo.partes`:
+`{"clave": "stress", "valor": 32.0, "referencia": 29.5, "subpuntaje": 68.0, "peso": 0.10, "dia_dato": "2026-11-23"}`
+on a day whose own day is `2026-11-24` -- `dia_dato` names the day before, exactly as the tool description now says.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 27 chunks on the final tree (23 chunks
+of up to 10 of the 229 ordinary `tests/test_*.py` modules, the 17 `test_garmin_*`/`test_host_*`/`test_importar_
+garmin`/`test_estados_vacios_hosted`/`test_persona_garmin`/`test_deploy_host` modules in 4 chunks of up to 5).
+Per-chunk counts summed to **5714**, reconciled against an independent `unittest.TestLoader().discover('tests',
+top_level_dir='.')` collect-only count on the same tree, which also returned **5714** -- exact match. Every chunk
+OK (one pre-existing expected failure, one pre-existing skip, both on `main` untouched); no regression.
+
+**Merge.** This launch's own diff (`body/readiness.py`, `body/agente/herramientas.py`, three test files) adds no
+schema or migration, no customer-facing bytes (the changed tool-description clause is assistant-facing, never shown
+to Carlos), and no cross-repo contract or DTO change -- merge policy A's three conditions are met, matching the
+approval reason's own "no customer bytes". `git checkout main`; `git merge --no-ff
+feat/body-preparacion-parte-dia-1` (branch tip e6d618df31d7679dfe51d8faa0ffd9ffedf9e41e onto `main`
+88e4670aebdd306dc0638fab8067e1b76402dbb7, merge commit b94584ea64a65852e59295c58121643ec115174d) -- tree identity
+proven: merge tree 10f269dfd3aef26d02ef0e8412e5b82f60e1eebb equals branch tree
+10f269dfd3aef26d02ef0e8412e5b82f60e1eebb, `git diff` between the branch commit and the merge commit empty. Branch
+deleted; `body-app` on `main`, clean. Not deployed (deploy follows Carlos's standing go, per the approval reason).
+
