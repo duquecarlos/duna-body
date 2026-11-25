@@ -1,17 +1,22 @@
 """BODY-AVATAR-3D-VISOR-1: the mock's 3D viewer, ported onto Hoy's body card behind an opt-in
-2D/3D switch -- 2D stays the default until the real anatomy mesh exists."""
+2D/3D switch -- 2D stays the default until the real anatomy mesh exists.
+
+BODY-AVATAR-3D-OCULTAR-1: Carlos rejected the stand-in figure, so the switch is hidden behind
+`body.rutas.hoy.CUERPO3D_VISIBLE` (False by default). Tests that assert the 3D markup patch that
+constant to True rather than being deleted -- the real-mesh slice flips it back on for good."""
 import json
 import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
 from body import anatomia, config, db, identity, seguridad, web
-from body.rutas import comun
+from body.rutas import comun, hoy as hoy_rutas
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -130,7 +135,8 @@ class SwitchRendersOnHoyOnlyTest(unittest.TestCase):
         pid = _mk_person(self.conn)
         _algun_dato_hoy(self.conn, pid)
         _use(pid)
-        r = client.get("/")
+        with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
+            r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn('cuerpo3d-seg', r.text)
         self.assertIn('cuerpo3d-track', r.text)
@@ -172,7 +178,8 @@ class DataAttributesTest(unittest.TestCase):
         pid = _mk_person(self.conn)
         _algun_dato_hoy(self.conn, pid)
         _use(pid)
-        r = client.get("/")
+        with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
+            r = client.get("/")
         self.assertEqual(r.status_code, 200)
         hash_ = comun.STATIC_HASH
         for rel in ("avatar/avatar3d.js", "avatar/figura-v0.json",
@@ -208,7 +215,8 @@ class Cuerpo3dJsonRoundtripsTest(unittest.TestCase):
              json.dumps([{"ejercicio": "press militar", "series": 3, "categoria": "hombro"}])))
         self.conn.commit()
         _use(pid)
-        r = client.get("/")
+        with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
+            r = client.get("/")
         self.assertEqual(r.status_code, 200)
         regiones = _bloque_json(r.text, "cuerpo3d-regiones")
         nombres = _bloque_json(r.text, "cuerpo3d-nombres")
@@ -225,7 +233,8 @@ class Cuerpo3dJsonRoundtripsTest(unittest.TestCase):
         pid = _mk_person(self.conn)
         _algun_dato_hoy(self.conn, pid)
         _use(pid)
-        r = client.get("/")
+        with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
+            r = client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIsNone(_bloque_json(r.text, "cuerpo3d-regiones"))
         self.assertNotIn("{}", r.text)
@@ -253,7 +262,9 @@ class I18nKeysExistTest(unittest.TestCase):
 
 
 class HonestyLineTest(unittest.TestCase):
-    """Ruling 8: the stand-in-figure line renders in the person's own language."""
+    """Ruling 8: the stand-in-figure line renders in the person's own language, while the 3D
+    switch is forced on -- BODY-AVATAR-3D-OCULTAR-1 hides it by default (see
+    CuerpoVisibleDefaultOffTest below)."""
 
     def setUp(self):
         self.conn = _reset_db(self)
@@ -262,8 +273,46 @@ class HonestyLineTest(unittest.TestCase):
         pid = _mk_person(self.conn)
         _algun_dato_hoy(self.conn, pid)
         _use(pid)
-        r = client.get("/")
+        with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
+            r = client.get("/")
         self.assertIn("Figura provisional: la anatomía real llega pronto.", r.text)
+
+
+class CuerpoVisibleDefaultOffTest(unittest.TestCase):
+    """BODY-AVATAR-3D-OCULTAR-1: Carlos rejected the stand-in figure (relayed verbatim from the
+    Personal desk, 25 Nov), so with the default `CUERPO3D_VISIBLE = False` Hoy carries none of
+    the 3D markup -- no switch, no canvas, no stand-in line, no visor.js tag, no regiones blob --
+    and a device that had chosen 3D in localStorage sees 2D, since visor.js (the only code that
+    ever reads `body.cuerpo3d`) is never loaded (ruling 2 / ruling 3 of this slice)."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+
+    def test_default_is_false(self):
+        self.assertFalse(hoy_rutas.CUERPO3D_VISIBLE)
+
+    def test_hoy_carries_no_3d_markup_by_default(self):
+        pid = _mk_person(self.conn)
+        _algun_dato_hoy(self.conn, pid)
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        for marker in ("cuerpo3d-seg", "cuerpo3d-track", "cuerpo3d-lienzo",
+                       "avatar/visor.js", "avatar/avatar3d.js", "cuerpo3d-regiones"):
+            self.assertNotIn(marker, r.text, marker)
+        self.assertNotIn("Figura provisional: la anatomía real llega pronto.", r.text)
+        self.assertNotIn("Stand-in figure: the real anatomy is coming.", r.text)
+
+    def test_stand_in_figure_stays_unreachable_while_hidden(self):
+        """Ruling 2: the figure that would name `figura-v0.json` (the stand-in) can never surface
+        by accident -- it is only ever referenced while `CUERPO3D_VISIBLE` is False."""
+        pid = _mk_person(self.conn)
+        _algun_dato_hoy(self.conn, pid)
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("figura-v0.json", r.text)
+        self.assertFalse(hoy_rutas.CUERPO3D_VISIBLE)
 
 
 class CspUnchangedTest(unittest.TestCase):
