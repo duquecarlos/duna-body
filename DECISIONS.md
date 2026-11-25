@@ -35612,3 +35612,90 @@ new follow-up ID, since no other work depends on it and nobody has asked for it 
 Merged as `ee6fa6f5a766b47cf7b5fa74e4e60f2c09e79ab1`, base `main` at
 `54d483732fabd729fb7b7fa179bf82e3fca3d859`, tree `3a14356d06621ac72092fedacf3612a98ae8cc2e` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-REVISION-DIA-PERIODO-1 -- done drops off the day-ahead card, an open period gets a "still going?" nudge (2026-11-25)
+
+Fixes findings 3 and 4 from BODY-REVISION-1-INV.
+
+**Finding 3, "done drops off" (ruling 1).** Today's "The day ahead" card's planned-session item:
+stays checked and muted (`✓ Hecho`) while done but not yet past its own time; drops off the card
+entirely once BOTH done and past its time; stays marked "Antes de hoy" (earlier today) while NOT
+done but past its time. All three states, plus the no-time-at-all case, are each their own test in
+`tests/test_hoy.py`'s `PlanHoyDoneDropsOffTest` (unit, calling `_dia_por_delante_ctx` directly) and
+`tests/test_plan_hoy.py`'s `PlanHoyDoneDropsOffRenderTest` (route-level, asserting the rendered
+HTML). `body/rutas/hoy.py` gained `_hhmm_ahora(person)`, a module-owned clock seam
+(`tests/test_guardia_parches.py`'s "tests patch the module that owns a name" convention) so tests
+patch `hoy._hhmm_ahora` instead of mocking `datetime.now`; every pre-existing direct caller of
+`_dia_por_delante_ctx`/`_plan_hoy_item` keeps its old behaviour unchanged, since the new
+`ahora_hhmm` parameter defaults to `"00:00"` ("nothing has passed yet").
+
+**Finding 4, "still going?" (ruling 2).** An open period of any kind (not only the "molestia"/
+training-through-it case the finding's bug report used as its example -- the ruling's own wording
+is generic, and every kind shares the same open/close mechanism) older than a versioned threshold
+gets exactly one line on Today, never on Día: `today.periodo_sigue`, with "Still going" (a `POST
+/periodo/{period_id}/sigue` that records today's date on the period and re-asks only after the
+threshold elapses again) and "It ended" (a plain `#asis-btn` anchor into the assistant chat panel's
+existing close flow -- Body never sets an end date itself). The threshold lives in
+`body/rutas/hoy.py`'s versioned `PERIODO_SIGUE_MODELO = {"version": "periodo-sigue-v1",
+"umbral_dias": 21}`, the same traceable-dict convention as `noche_inusual.MODELO` and
+`turnos_costo.MODELO`. `tests/test_periodo_pantallas.py`'s `PeriodoSigueCtxTest` (7 cases: below
+threshold, at threshold, closed, answered recently, answered long ago asks again, never on
+`/day/{day}`, English rendering) and `PeriodoSigueRouteTest` (4 cases: records and redirects, never
+sets `end_day`, another person's period and an unknown period id are both no-ops) cover it.
+
+**Schema (ruling 3).** One additive column, `period.sigue_preguntado_en TEXT` (nullable, never
+backfilled -- every existing row reads as `NULL`, "never asked"), migrated in `body/db.py`'s
+`_migrate()` with the same `PRAGMA table_info` guard the `zonas` column next to it already uses.
+Written only by the new `db.marcar_periodo_sigue_preguntado(conn, person_id, period_id, day)`,
+which refuses a `period_id` that is not the caller's own and never touches `kind`, `start_day`,
+`end_day`, `note` or `zonas`. `body/mudanza.py` needed no code change: `period`'s
+`TableSpec(match_cols=None)` builds `_do_insert`/`_do_update`'s column list dynamically from the
+row dict, so the new column flows through automatically -- confirmed, not assumed, by a new
+regression test mirroring the existing `PeriodZonasMudanzaTest` precedent
+(`tests/test_mudanza.py`'s `PeriodSiguePreguntadoMudanzaMudanzaTest`).
+
+**Gate (ruling 4).** `.venv/Scripts/python.exe -m unittest discover tests -t .`. The background-
+execution deny hook (`ORCH-WORKER-BACKGROUND-DENY-HOOK-1`) and the 600 s foreground cap together
+rule out a single `discover` invocation for a 248-module, ~580 s suite, so it ran in 27 foreground
+chunks of named modules (`python -m unittest tests.test_a tests.test_b ...`, 4-10 modules each, 4-5
+for the slower Garmin/host groups), one chunk at a time, every chunk green. Summed per-chunk count:
+**5813**. Reconciled against an independent `unittest.TestLoader().discover("tests",
+top_level_dir=".")` collect-only count on the same final tree, which also returned **5813** --
+exact match (the first sum attempt had an arithmetic slip and was re-added before trusting it).
+
+Two guard tests needed a fix, both direct, measured consequences of this slice's own changes, not
+scope creep: `tests/test_periodo.py`'s new `SiguePreguntadoColumnMigrationTest` originally inserted
+its pre-migration row before `period_kind` held any seed data, failing on the `kind` foreign key --
+fixed by seeding `period_kind` manually first, the same way the existing `zonas`-column migration
+test in `tests/test_lesion_zona.py` already does. `tests/test_web_entry.py`'s `RouteSetTest` pins
+the whole app's exact `(method, path)` route set; it failed (107 routes measured against a pinned
+106) until the new `/periodo/{period_id}/sigue` POST route was added to its `BEFORE` set.
+
+**Merge.** Customer-facing strings changed (9 new i18n keys, es and en both) but no cross-repo
+contract; the spec's own body says "YOU MAY MERGE" for exactly this case (customer bytes, to be
+measured at 375 px by the orchestrator before any deploy), so Merge Policy A's merge-on-green
+applies without waiting on that measurement. `git switch main`; `git merge --no-ff
+feat/body-revision-dia-periodo-1`.
+
+Touches: `body/db.py`, `body/rutas/hoy.py`, `body/templates/today.html`, `body/i18n/es.json`,
+`body/i18n/en.json`, `tests/test_hoy.py`, `tests/test_mudanza.py`, `tests/test_periodo.py`,
+`tests/test_periodo_pantallas.py`, `tests/test_plan_hoy.py` -- all in the dispatch's own `touches`.
+`tests/test_web_entry.py` needed one line beyond that list (the route-set guard fix above); no
+other file was touched.
+
+**Customer bytes changed, for the orchestrator's 375 px check (9 keys, es then en).**
+- `today.periodo_sigue`: es "Tu período «{kind}» lleva {n} días abierto. ¿Sigue?" / en "Your period
+  \"{kind}\" has been open {n} days. Still going?" (Today, new aviso block, open-period age ≥
+  threshold.)
+- `today.periodo_sigue.sigue_btn`: es "Sigue" / en "Still going" (same block, first button.)
+- `today.periodo_sigue.termino_btn`: es "Ya terminó" / en "It ended" (same block, second button,
+  links to `#asis-btn`.)
+- `today.dia.hecho`: es "Hecho" / en "Done" (day-ahead card, done-but-not-yet-past-time chip.)
+- `today.dia.antes_hoy`: es "Antes de hoy" / en "Earlier today" (day-ahead card, not-done-but-past-
+  time chip.)
+
+**Open followups.** None raised.
+
+Merged as `ff0cfb17670bd6b720c900c560292ea3e32367a5`, base `main` at
+`6468ace40a6a3747d6a792dc0d5f6f8579e9e615`, tree `91da81723a4f188f25a69ff96a63cbee4e4425d9` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
