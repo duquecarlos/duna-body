@@ -276,13 +276,25 @@ class TrendsSelfMeasuredGroupTest(unittest.TestCase):
         groups = dict(comun.TREND_GROUPS)
         self.assertIn("self", groups)
         self.assertEqual(set(groups["self"]),
-                         {"flex_alcance_cm", "snoring_min", "body_weight_kg", "waist_cm", "protein_g",
+                         # BODY-MEDIDA-CINTA-1 ruling 3: waist_cm moved out of this generic sweep
+                         # into its own "measures" group; body_weight_kg stays here.
+                         {"flex_alcance_cm", "snoring_min", "body_weight_kg", "protein_g",
                           "soreness_legs", "soreness_glutes", "soreness_back", "soreness_chest",
                           "soreness_shoulders", "soreness_arms", "soreness_core",
                           # BODY-COMIDA-1: six more suma_ingesta keys beside protein_g.
                           "kcal", "carbs_g", "fat_g", "fiber_g", "water_ml", "caffeine_mg", "alcohol_g",
                           # BODY-CHECKIN-1: the self-report scales, each "latest of day".
                           "mood", "energy", "stress_felt"})
+
+    def test_trend_groups_has_a_measures_group_with_waist_and_the_eleven_circumferences(self):
+        """BODY-MEDIDA-CINTA-1 ruling 3: one dedicated group, waist_cm plus the eleven tape-measured
+        circumferences, read as one set."""
+        groups = dict(comun.TREND_GROUPS)
+        self.assertIn("measures", groups)
+        self.assertEqual(set(groups["measures"]),
+                         {"waist_cm", "arm_relaxed_left_cm", "arm_relaxed_right_cm", "arm_flexed_left_cm",
+                          "arm_flexed_right_cm", "chest_cm", "hips_cm", "thigh_left_cm", "thigh_right_cm",
+                          "calf_left_cm", "calf_right_cm", "neck_cm"})
 
     def test_trends_page_shows_the_self_measured_card_from_a_single_point(self):
         page = self.client.get("/trends?todas=1").text

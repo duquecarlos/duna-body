@@ -68,6 +68,13 @@ NIGHT_BREATH = ["sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration_lo
 # cadence (a weigh-in or a tape measurement is not a daily habit), not snoring_min's near-daily one.
 SELF_MEASURED = ["flex_alcance_cm", "snoring_min", "body_weight_kg", "waist_cm"]
 
+# BODY-MEDIDA-CINTA-1 ruling 5: the eleven tape-measured circumferences, seeded every three weeks
+# (sparser than body_weight_kg/waist_cm's own weekly cadence -- a tape measurement is not a weekly
+# habit) by _seed_self_metrics below.
+CINTA_KEYS = ["arm_relaxed_left_cm", "arm_relaxed_right_cm", "arm_flexed_left_cm", "arm_flexed_right_cm",
+              "chest_cm", "hips_cm", "thigh_left_cm", "thigh_right_cm", "calf_left_cm", "calf_right_cm",
+              "neck_cm"]
+
 # BODY-AGUJETAS-1: next-day muscle soreness, one key per muscle group (ORCH-CARLOS-DELEGATES-
 # TIER-1-1 ruling 1) -- seeded by _seed_soreness below, on its own cadence (the day after an
 # invented strength_training session), not this module's weekly/near-daily ones.
@@ -85,6 +92,14 @@ RANGES = {
     "vo2max": (38, 46), "vo2max_cycling": (40, 48), "fitness_age": (28, 42),
     "flex_alcance_cm": (0, 25), "snoring_min": (0, 70),
     "body_weight_kg": (68, 76), "waist_cm": (78, 88),
+    # BODY-MEDIDA-CINTA-1 ruling 5: invented demo ranges, inside the plausible ranges a typo guard
+    # checks (ruling 1), never anyone's real numbers.
+    "arm_relaxed_left_cm": (28, 34), "arm_relaxed_right_cm": (28, 34),
+    "arm_flexed_left_cm": (30, 36), "arm_flexed_right_cm": (30, 36),
+    "chest_cm": (95, 105), "hips_cm": (90, 100),
+    "thigh_left_cm": (50, 58), "thigh_right_cm": (50, 58),
+    "calf_left_cm": (35, 40), "calf_right_cm": (35, 40),
+    "neck_cm": (36, 40),
     "protein_g": (15, 45),  # one meal's worth; several a day sum into the day's total
     "sleep_spo2_avg": (93, 98), "sleep_respiration_avg": (13, 17),
     "sleep_respiration_low": (9, 13), "sleep_respiration_high": (17, 23),
@@ -1111,11 +1126,13 @@ def _seed_despertar_correccion(conn, db, person_id: int) -> int:
 
 
 def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], person_id: int) -> int:
-    """The four generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1, BODY-MEDIDA-PESO-1),
-    sparser than the watch's daily figures: a flexibility reach, a weigh-in and a waist reading
-    about once a week each, a snoring minutes-per-night value most nights -- all with source='self',
-    via db.set_metric so they never ride along in save_day's single 'garmin'-sourced batch."""
-    rows = 0
+    """The generic self-measured metric_def rows (BODY-ENTRENO-SCHEMA-1, BODY-MEDIDA-PESO-1,
+    BODY-MEDIDA-CINTA-1), sparser than the watch's daily figures: a flexibility reach, a weigh-in
+    and a waist reading about once a week each, the eleven tape-measured circumferences every third
+    Monday (ruling 5: "every three weeks"), a snoring minutes-per-night value most nights -- all
+    with source='self', via db.set_metric so they never ride along in save_day's single
+    'garmin'-sourced batch."""
+    rows, lunes_vistos = 0, 0
     for d in all_days:
         if d.weekday() == 0:
             db.set_metric(conn, d.isoformat(), "flex_alcance_cm", _value(rng, "flex_alcance_cm", 0.0),
@@ -1124,6 +1141,11 @@ def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], perso
                            "self", person_id)
             db.set_metric(conn, d.isoformat(), "waist_cm", _value(rng, "waist_cm", 0.0), "self", person_id)
             rows += 3
+            if lunes_vistos % 3 == 0:
+                for key in CINTA_KEYS:
+                    db.set_metric(conn, d.isoformat(), key, _value(rng, key, 0.0), "self", person_id)
+                    rows += 1
+            lunes_vistos += 1
         if rng.random() < 0.85:
             db.set_metric(conn, d.isoformat(), "snoring_min", _value(rng, "snoring_min", 0.0), "self", person_id)
             rows += 1

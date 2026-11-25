@@ -300,6 +300,22 @@ class SeededContentTest(unittest.TestCase):
                 for day in days:
                     self.assertEqual(date.fromisoformat(day).weekday(), 0, f"{key} on {day} is not a Monday")
 
+    def test_tape_circumferences_are_seeded_every_three_weeks_not_weekly(self):
+        """BODY-MEDIDA-CINTA-1 ruling 5: the eleven tape-measured circumferences are sparser than
+        body_weight_kg/waist_cm's own weekly cadence -- every third Monday, never every Monday."""
+        weight_days = {r["day"] for r in self.conn.execute(
+            "SELECT DISTINCT day FROM daily_metric WHERE metric_key = 'body_weight_kg'")}
+        for key in demo.CINTA_KEYS:
+            with self.subTest(key=key):
+                days = [r["day"] for r in self.conn.execute(
+                    "SELECT DISTINCT day FROM daily_metric WHERE metric_key = ?", (key,))]
+                self.assertGreater(len(days), 0)
+                self.assertLess(len(days), len(weight_days),
+                                 f"{key} seeded as often as the weekly weight/waist cadence")
+                for day in days:
+                    self.assertEqual(date.fromisoformat(day).weekday(), 0, f"{key} on {day} is not a Monday")
+                    self.assertIn(day, weight_days, f"{key} on {day} is not one of the weighed Mondays")
+
     def test_lesion_period_names_a_zona(self):
         # BODY-LESION-ZONA-1 ruling 6.
         row = self.conn.execute(

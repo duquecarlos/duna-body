@@ -9,6 +9,14 @@ from __future__ import annotations
 from . import db, fuentes
 from .desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 
+# BODY-MEDIDA-CINTA-1 ruling 3: waist_cm plus the eleven tape-measured circumferences read as one
+# set ("Medidas"/"Measurements"), not scattered across the generic "self" sweep below -- so this
+# group's own keys are named here and excluded from that sweep by db.METRIC_DEFS[5] == "self" alone.
+# body_weight_kg stays in the generic sweep (ruling 3: "weight stays where it is").
+MEDIDAS_KEYS = ["waist_cm", "arm_relaxed_left_cm", "arm_relaxed_right_cm", "arm_flexed_left_cm",
+                "arm_flexed_right_cm", "chest_cm", "hips_cm", "thigh_left_cm", "thigh_right_cm",
+                "calf_left_cm", "calf_right_cm", "neck_cm"]
+
 # BODY-WEB-ESTRUCTURA-7: TREND_KEYS and TREND_GROUPS live here, not in Tendencias (body/rutas/
 # tendencias.py), because Día (body/rutas/hoy.py's _tendencias_href) and Turnos (body/rutas/
 # turnos.py's _turnos_filas, via comun._es_extra_metric) both read them too -- two-or-more-domains
@@ -40,7 +48,10 @@ TREND_GROUPS = [
     # origen 'self', read off db.METRIC_DEFS rather than named here, so a future self-measured key
     # joins this group -- and the picker -- without a second place to list it (template, not one
     # person).
-    ("self", [d[0] for d in db.METRIC_DEFS if d[5] == "self"]),
+    ("self", [d[0] for d in db.METRIC_DEFS if d[5] == "self" and d[0] not in MEDIDAS_KEYS]),
+    # BODY-MEDIDA-CINTA-1 ruling 3: one group for every self-measured circumference, waist_cm first
+    # (its own card carries the group's one-time how-to-measure note, in trends.plain.waist_cm).
+    ("measures", MEDIDAS_KEYS),
     # BODY-DESPLAZAMIENTO-3 ruling 2: Personal's daily commute summary -- keys read from the
     # registry (body/fuentes.py), itself read from desplazamiento_import's own mapping, never a
     # third hand-typed list. Unlike every group above, this one is read by the Tendencias route
