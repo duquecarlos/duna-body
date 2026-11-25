@@ -9,7 +9,7 @@ import string
 import unittest
 from unittest import mock
 
-from body import anatomia, db, history, horizonte, noche_inusual, tutoriales
+from body import anatomia, db, experimentos, history, horizonte, noche_inusual, tutoriales
 from body import turnos_costo
 from body.agente import herramientas, propuestas
 from body.rutas import comun, metas, tendencias, turnos
@@ -66,7 +66,12 @@ def _scan_calls():
 # Fixed lists a dynamic "prefix" + concatenation can resolve to, read from the source each prefix's
 # value actually comes from (not re-typed by hand). The dict key matches what `_scan_calls` records:
 # the literal prefix exactly as it appears before the '+' or '~' in the source.
-_METRIC_KEYS = [d[0] for d in db.METRIC_DEFS]
+# BODY-REVISION-I18N-FUGAS-1 ruling 1: the union of every metric_def key AND every intraday kind
+# (body/experimentos.py's own _KIND_INTRADIA) -- heart_rate/stress carry no metric_def row at all
+# (they are raw_payload kinds, never a db.set_metric column), so metric_def alone missed them and
+# their labels (t("metric." + k) in body/rutas/experimentos.py's _metric_line) went untested. A new
+# intraday kind with no label now fails here too.
+_METRIC_KEYS = sorted({d[0] for d in db.METRIC_DEFS} | set(experimentos._KIND_INTRADIA))
 _TREND_GROUP_KEYS = [k for _, keys in comun.TREND_GROUPS for k in keys]
 _TREND_Q_KEYS = comun.TREND_KEYS + _TREND_GROUP_KEYS
 _TREND_SHORT_KEYS = sorted(set(tendencias.WEEK_KEYS) | set(history.PATTERN_KEYS))
