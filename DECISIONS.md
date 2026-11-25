@@ -35519,3 +35519,96 @@ cross-repo contract, so Merge Policy A's merge-on-green applies. `git switch mai
 later slice replaces once a real anatomy mesh exists -- nothing in `visor.js` or the template
 needs to change for that swap, only the figure JSON and, if the real mesh needs it, the primitive
 builder itself.
+
+## BODY-REVISION-AJUSTES-NAV-PICKER-1
+
+Findings 7, 13 and 14 from BODY-REVISION-1-INV (Carlos, relayed by the Personal desk 24 Nov:
+"go browse fully body App and look for improvements fixes and new ideas").
+
+**Finding 7 (ruling 1).** `settings.html`'s trabaja-turnos radio read the raw, possibly NULL
+`db.get_trabaja_turnos` column instead of `db.trabaja_turnos_si()` -- a person who never answered
+but already had shift data saw neither button selected, instead of "Sí" like every other screen.
+`ajustes.py`'s `settings()` already computed the inferred value as `turnos` (the nav already used
+it); the template now reads that instead, and the now-unused raw-column read was dropped from the
+route. `tests/test_turnos_opcional_2.py`'s `AjustesCardTest`: the old `test_null_neither_button_on`
+tested exactly the bug (NULL + no shift data showed neither button); replaced with
+`test_null_without_shift_data_marks_no_on` (now "No", matching every other screen) and
+`test_null_with_shift_data_marks_si_on` (ruling 1's own example: NULL + existing shift rows shows
+"Sí"). Saving is unchanged: it still writes the explicit answer exactly as before.
+
+**Finding 13 (ruling 2).** `body/rutas/comida.py`'s picker (`_render_picker` and the GET view)
+never passed `turnos` to `comida_productos.html`, so `base.html`'s shared nav silently dropped the
+Shifts tab for a person who works shifts. Both render paths now pass `db.trabaja_turnos_si()`. Per
+ruling 2, a census test was added rather than a one-route check: `tests/test_rendimiento.py`'s new
+`NavShiftsLinkCensusTest` walks the SAME non-vacuous GET route set `RouteCostCeilingTest` proves
+equal to `_CEILINGS`, and asserts every route whose response carries the shared nav
+(`<nav class="tabs"`) also carries `href="/shifts"`, for a person who works shifts -- so a future
+screen that forgets to thread `turnos` is caught by the gate, not found by a person later. Also
+added a focused regression test, `tests/test_comida.py`'s `PickerNavShiftsLinkTest` (the plain GET,
+the error-reload path through `_render_picker`, and the absent case). `/comida/productos`'s own
+statement ceiling (29) needed no change: measured 24 statements now (22 before), comment in
+`test_rendimiento.py` updated to say so.
+
+**Finding 14 (ruling 3).** The picker's "Según la etiqueta"/"From the label" note never said which
+basis (per 100 g, per 100 ml or per portion) the typed nutrition figures are in, although that is
+exactly what the `tamano_unidad` selector right above it determines (`body/rutas/comida.py`'s own
+`{"g": "100g", "ml": "100ml", "unidad": "unidad"}` mapping, `productos.establecer_nutricion`'s
+`basis`). The note (same i18n key, both languages) now states that mapping plainly.
+
+**Deviation from ruling 3's literal wording.** The ruling's own example reads «per portion (N g)»,
+with N read live off the `tamano_neto` field as the person types it. This page has no JS today
+(`body/rutas/comida.py`'s own docstring: "Plain HTML GET/POST, no JS required") and
+`body/seguridad.py`'s CSP ships `script-src 'self'` with no `'unsafe-inline'`
+(`tests/test_mock_r2_hoy.py`'s own `test_no_inline_script_was_added_for_this` guards exactly this
+for the one inline-script temptation that slice had) -- an inline `<script>` would be silently
+blocked by the browser, and a new static `.js` file sits outside this slice's own `touches`. The
+note instead states all three mappings statically, in both languages, rather than computing a live
+weight it has no sanctioned way to show. Measured and flagged here rather than silently
+implemented or silently dropped, per the slice contract's own rule for a prompt/measurement
+conflict.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in foreground chunks of
+1-12 modules (248 test modules total; the Garmin and host/deploy groups run smaller, per the
+dispatch's own budget rule for slow modules). Every chunk OK. Summed per-chunk count: **5787**.
+Reconciled against an independent `unittest.TestLoader().discover("tests",
+top_level_dir=".").countTestCases()` on the same final tree, which also returned **5787** -- exact
+match, confirmed per-module against the full 248-file list (one chunk's own terminal output was
+misread at first pass -- 109 instead of 144 for test_pulido_1/2/3 plus
+test_pull/_intradia_experimentos/_relleno -- caught by the per-module reconciliation and re-run
+clean before trusting the total).
+
+**Merge.** Customer-facing strings changed (one i18n value per language, same key, no new key) but
+no schema or migration and no cross-repo contract; the spec's own body says "YOU MAY MERGE" for
+exactly this case (customer bytes, measured at 375 px by the orchestrator before any deploy), so
+Merge Policy A's merge-on-green applies without waiting on that measurement. `git switch main`;
+`git merge --no-ff feat/body-revision-ajustes-nav-picker-1`.
+
+Touches: `body/rutas/ajustes.py`, `body/templates/settings.html`, `body/rutas/comida.py`,
+`body/i18n/es.json`, `body/i18n/en.json`, `tests/test_comida.py`, `tests/test_rendimiento.py`,
+`tests/test_turnos_opcional_2.py`. `body/templates/comida_productos.html`, `body/rutas/comun.py`,
+`tests/test_comida_compartida.py`, `tests/test_comida_corregir.py`,
+`tests/test_turnos_opcional_3.py`, `tests/test_turnos_opcional_4.py`,
+`tests/test_turnos_opcional_5.py`, `tests/test_turnos_enlaces.py`, `tests/test_i18n_paridad.py`,
+`tests/test_mock_r2_hoy.py` were all in the dispatch's own `touches` but needed no edit:
+`comida_productos.html` because `turnos` only had to be threaded through the route (the template
+already reads it through `base.html`'s shared nav context, like every other screen template), and
+the rest because none of them pinned anything this slice's actual changes touched -- each
+confirmed by running it.
+
+**Customer bytes changed, for the orchestrator's 375 px check.**
+- es `comida.productos.fuente_etiqueta`: "Según la etiqueta" → "Según la etiqueta: por 100 g para
+  gramos, por 100 ml para mililitros, o por porción para unidad." (Comida → picker → "Nuevo
+  producto" card, the note above the nutrition-value fields.)
+- en `comida.productos.fuente_etiqueta`: "From the label" → "According to the label: per 100 g for
+  grams, per 100 ml for milliliters, or per portion for unit." (same card.)
+- Ajustes → "¿Trabajas por turnos?" card: no string changed, but which button now reads "on" can
+  change, for a person who never explicitly answered and already has shift data (now "Sí", was
+  neither).
+
+**Open followup.** None raised. Finding 14's live-weight parenthetical is the one piece of the
+ruling's literal wording deliberately not done, named above as a measured deviation rather than a
+new follow-up ID, since no other work depends on it and nobody has asked for it to be tracked.
+
+Merged as `ee6fa6f5a766b47cf7b5fa74e4e60f2c09e79ab1`, base `main` at
+`54d483732fabd729fb7b7fa179bf82e3fca3d859`, tree `3a14356d06621ac72092fedacf3612a98ae8cc2e` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
