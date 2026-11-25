@@ -1,6 +1,15 @@
 {% macro cuerpo_vista(t, cuerpo, extra_class='', sizes='(min-width: 768px) 700px, calc(100vw - 64px)') %}
 <div class="card cuerpo-card{% if extra_class %} {{ extra_class }}{% endif %}">
   <div class="cuerpo-vista" data-recorte="{{ cuerpo.recorte }}">
+    {% if cuerpo.cuerpo3d %}
+    {# BODY-AVATAR-3D-VISOR-1: exactly one of 2D/3D is ever on, so this is a radio pair
+       (aria-checked), never aria-pressed -- tests/test_experimentos_pantalla.py's own
+       HoyButtonStateTest counts every aria-pressed="true"/"false" on this page by name. #}
+    <div class="seg cuerpo3d-seg" role="radiogroup" aria-label="{{ t('cuerpo.dibujo.aria') }}" hidden>
+      <button type="button" class="cuerpo3d-btn on" data-modo="2d" role="radio" aria-checked="true">{{ t('cuerpo.dibujo.2d') }}</button>
+      <button type="button" class="cuerpo3d-btn" data-modo="3d" role="radio" aria-checked="false">{{ t('cuerpo.dibujo.3d') }}</button>
+    </div>
+    {% endif %}
     <div class="cuerpo-vista-track">
       {% for v in cuerpo.vistas %}
       <div class="cuerpo-vista-capa{% if loop.first %} on{% endif %}">
@@ -30,9 +39,23 @@
       </div>
       {% endfor %}
     </div>
+    {% if cuerpo.cuerpo3d %}
+    <div class="cuerpo3d-track" hidden>
+      <canvas class="cuerpo3d-lienzo"
+              data-script="{{ static_url('avatar/avatar3d.js') }}"
+              data-figura="{{ static_url('avatar/figura-v0.json') }}"
+              data-matcap-musculo-claro="{{ static_url('avatar/img/matcap-musculo-claro-512.webp') }}"
+              data-matcap-piel-claro="{{ static_url('avatar/img/matcap-piel-claro-512.webp') }}"
+              data-matcap-musculo-oscuro="{{ static_url('avatar/img/matcap-musculo-oscuro-512.webp') }}"
+              data-matcap-piel-oscuro="{{ static_url('avatar/img/matcap-piel-oscuro-512.webp') }}"
+              data-fibras="{{ static_url('avatar/img/fibras-512.webp') }}"
+              aria-label="{{ t('cuerpo.aria3d.lienzo') }}"></canvas>
+      <span class="cuerpo3d-pista">{{ t('cuerpo.dibujo.pista') }}</span>
+    </div>
+    {% endif %}
     <div class="cuerpo-vista-btns">
       {% for v in cuerpo.vistas %}
-      <button type="button" class="cuerpo-vista-btn{% if loop.first %} on{% endif %}"
+      <button type="button" class="cuerpo-vista-btn{% if loop.first %} on{% endif %}" data-vista="{{ v.id }}"
               aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ v.label }}</button>
       {% endfor %}
       <span class="cuerpo-vista-swipe">{{ t('cuerpo.desliza') }}</span>
@@ -40,5 +63,22 @@
   </div>
   <p class="cuerpo-caption">{{ cuerpo.caption }}</p>
   {% if cuerpo.caption_limitada %}<p class="cuerpo-caption">{{ cuerpo.caption_limitada }}</p>{% endif %}
+  {% if cuerpo.cuerpo3d %}
+  <p class="cuerpo-caption cuerpo3d-detalle" aria-live="polite" hidden>{{ t('cuerpo.detalle3d.inicial') }}</p>
+  <p class="cuerpo-caption cuerpo3d-aviso" hidden>{{ t('cuerpo.aviso3d.figura_provisional') }}</p>
+  {# Three flat blobs, never one nested object -- tests/test_estados_vacios.py's own leak sweep
+     flags a bare "{{" "}}" "{}" "[]" literal anywhere in rendered HTML, which a nested JSON
+     object's own closing braces (or a genuinely empty regiones map, on a day with no state at
+     all) would otherwise produce. `regiones` reads `null` on that empty day (ruling 5's own
+     absent-key-means-no-state contract, carried one step further: an empty MAP means no state
+     either, and visor.js reads a null the same way it reads {}). #}
+  <script type="application/json" class="cuerpo3d-regiones">{{ (cuerpo.cuerpo3d.regiones or none) | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-nombres">{{ cuerpo.cuerpo3d.nombres | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-estados-texto">{{ cuerpo.cuerpo3d.estados_texto | tojson }}</script>
+  {# This macro, never the screen template, loads visor.js -- `cuerpo.cuerpo3d` is Hoy-only
+     (body/rutas/hoy.py's own _cuerpo3d_ctx), so Tendencias and Turnos, which call this same
+     macro, never fetch it (ruling 3). #}
+  <script src="{{ static_url('avatar/visor.js') }}" defer></script>
+  {% endif %}
 </div>
 {% endmacro %}

@@ -35402,3 +35402,120 @@ identity: the branch tip's own tree and the merge commit's own tree are BOTH
 and `regiones_estado()` only say what state a region is in today, never how long it has been there
 or when it is expected to change. A 3D view wanting that will need a new followup slice, not a read
 of what this one built.
+
+## BODY-AVATAR-3D-VISOR-1
+
+Ports the already-approved mock (`dev-protocol/research/avatar-3d-mock/`, WebGL2, no third-party
+code) onto Hoy's body card, opt-in behind a 2D/3D switch. 2D stays the rendered default; the switch
+only appears once `visor.js` has feature-detected WebGL2, and the viewer's own heavy assets (its
+script, the stand-in figure, five matcap/fibre images) are fetched only once a person actually
+picks 3D, so a 2D visit to Hoy pays for none of it.
+
+**Ruling 1 -- ported unchanged.** `avatar3d.js` and `figura-v0.json` plus the five images are
+copied byte-for-byte from the mock into `body/static/avatar/`; no edit was needed to either.
+`figura-v0.json`'s own `"regiones"` list is exactly `["otro"] + [r["clave"] for r in
+anatomia.REGIONES]` (BODY-AVATAR-3D-REGIONES-1's own canonical list), checked by a roundtrip test.
+Body's own binding, `body/static/avatar/visor.js`, is new: feature detection, a per-device
+localStorage choice (`body.cuerpo3d`, every read/write in `try`/`catch`), and the lazy fetch.
+
+**Ruling 2 -- no third-party code, no CSP change.** Every asset is same-origin, served from
+`/static/avatar/...` through the existing static mount; `body/web.py` and `body/seguridad.py`
+needed no edit, confirmed by running `tests/test_seguridad.py` unchanged.
+
+**Ruling 3 -- opt-in, 2D default, Hoy only.** The switch is a `role="radiogroup"` pair
+(`aria-checked`, deliberately not `aria-pressed` -- see the collision below), hidden until
+`visor.js` confirms WebGL2. `body/rutas/hoy.py` gets a new `_cuerpo3d_ctx(t, vistas)`, and only
+`_cuerpo_hoy_ctx`'s own return carries its result as a `cuerpo3d` key; `turnos.py` and
+`tendencias.py` build their own `cuerpo_ctx` straight from `anatomia.contexto()` and never pass
+through `_cuerpo_hoy_ctx`, so they never carry that key and the template's `{% if cuerpo.cuerpo3d
+%}` block renders nothing there -- no screen-type conditional needed anywhere.
+
+**Ruling 4 -- Hoy's existing buttons drive it too.** The same Músculos/Espalda/Corazón buttons
+call `avatar.vista()`/`avatar.lado()`/`avatar.elegirRegion()` once 3D is active; no new button
+besides the switch. Drag turns the body and a vertical swipe still scrolls the page (both already
+handled inside the ported `avatar3d.js`, untouched).
+
+**Ruling 5 -- region taps.** Reads REGIONES-1's own `regiones` map; a tap shows the region's name
+(`cuerpo.grupo.<clave>`, two new keys added for corazon/cerebro) plus one of four new state words
+(`cuerpo.estado3d.{entrenado,pendiente,limitada,sin_registro}`, es+en).
+
+**Ruling 6 -- colors from tokens.** Two new `body.css` custom properties, `--cuerpo3d-raya` (hatch)
+and `--cuerpo3d-organo` (organ tint), defined in both light and dark themes; the shader reads them
+through `getComputedStyle`, alongside the existing `--body` token for the glow, never hardcoded.
+
+**Ruling 7 -- battery/motion.** Draw-on-change only, DPR capped at 2, no idle spin,
+`prefers-reduced-motion` respected -- all already inside the ported `avatar3d.js`; nothing in this
+slice's own code runs a loop of its own.
+
+**Ruling 8 -- honesty line.** `cuerpo.aviso3d.figura_provisional` ("Figura provisional: la
+anatomía real llega pronto." / its English pair) renders under the figure whenever `cuerpo3d` is
+on, in both languages, for as long as `figura-v0.json` is a placeholder.
+
+**Two collateral regressions, found running the gate, fixed within `touches` only (never by
+editing the guard that caught them):**
+
+1. The first cut embedded one `cuerpo.cuerpo3d | tojson` blob with nested dicts.
+   `tests/test_estados_vacios.py`'s and `tests/test_estados_vacios_hosted.py`'s own leak sweep
+   flags a bare `"}}"`/`"{}"` literal anywhere in rendered HTML -- a nested object's own closing
+   braces, and a genuinely empty `regiones` map on a day with no training/plan/lesion state at
+   all, both tripped it. Fixed by splitting into three flat `<script type="application/json">`
+   blobs (`cuerpo3d-regiones`/`cuerpo3d-nombres`/`cuerpo3d-estados-texto`, never nested) and
+   rendering `regiones` as `(cuerpo.cuerpo3d.regiones or none) | tojson`, so an empty day reads
+   `null`, never a literal `"{}"`.
+2. The switch's default-on 2D button rendered `aria-pressed="true"`, and
+   `tests/test_experimentos_pantalla.py`'s own `HoyButtonStateTest` counts an exact global total
+   of `aria-pressed="true"/"false"` on Hoy (documented in its own docstring as the page's
+   pre-existing 3-button view row plus a 2-button experiment widget). Fixed by using
+   `role="radiogroup"`/`role="radio"`/`aria-checked` instead -- a mutually-exclusive 2-option
+   switch is the correct ARIA shape for it regardless, not a workaround chosen to dodge the count.
+3. The 3D track's own `<div>` reused the literal class `cuerpo-vista-track` (to inherit its box
+   CSS) alongside its own `cuerpo3d-track`, which made `tests/test_hoy_escritorio.py`'s
+   `test_figure_rendered_exactly_once` -- an exact-count guard on that class name's text -- see the
+   figure "rendered twice". Fixed by giving `.cuerpo3d-track` its own class only, and extending
+   every box rule (the base box, and both height-cap media queries, as sibling rules rather than a
+   combined selector so each media query's own exact-text guard in the same test file still
+   matches byte for byte) to cover it too.
+4. `cuerpo.aria3d.lienzo`'s Spanish string read "...para ver su semana" -- third person, where the
+   app's own tú register (checked everywhere by `tests/test_registro_tu.py`) expects "tu semana".
+   Fixed in the string itself, not the guard.
+
+None of the four needed a change outside `touches`; `body/web.py` and `body/seguridad.py` were
+read and confirmed to need no edit.
+
+Touches: `body/static/avatar/` (new: `avatar3d.js`, `visor.js`, `figura-v0.json`, `img/*.webp`),
+`body/static/body.css`, `body/templates/_cuerpo_vista.html`, `body/anatomia.py`,
+`body/rutas/hoy.py`, `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_avatar3d.py` (new).
+`body/web.py`, `tests/test_cuerpo_vista.py`, `tests/test_static_version.py`,
+`tests/test_seguridad.py`, `tests/test_i18n_paridad.py` were all in the dispatch's own `touches`
+but needed no edit, each confirmed by running it.
+
+New `tests/test_avatar3d.py` (33 tests): every ported file's existence, type and byte-for-byte
+unchanged status; `figura-v0.json`'s regiones list against `anatomia.REGIONES`; the switch
+rendering on Hoy only (shifts/trends carry no 3D block); `static_url`'s cache-busting on every
+data attribute; the three-blob JSON roundtrip (including the empty-day `null` case, proving
+regression #1 stays fixed); every new i18n key present in both languages; CSP unchanged.
+
+Committed on `feat/body-avatar-3d-visor-1` as two commits: `380048e` (the port itself) and
+`01aff36` (the two regressions found while running the gate, numbers 3 and 4 above -- 1 and 2 were
+caught and fixed before the first commit) before the whole gate, base `main` at
+`5329e8f45a3261ed4ddfc4794ef79b7718b90452`.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in foreground chunks of
+38-60 modules (248 test modules total; `test_guardia_parches` run alone, ~565s by itself, a
+pre-existing characteristic of that module unrelated to this diff). Per-chunk counts: 982, 1052,
+953, 1270, 1517, 8 -- summing to **5782**. Reconciled against an independent
+`unittest.TestLoader().discover("tests", top_level_dir=".").countTestCases()` on the same final
+tree, which also returned **5782** -- exact match. Every chunk OK; the one `skipped=1,
+expected failures=1` inside the 1270-test chunk is pre-existing and unrelated to this diff (not
+re-investigated, since BODY-AVATAR-3D-VISOR-1 touches none of the modules that chunk's skip/xfail
+belong to).
+
+**Merge.** Customer-facing strings changed (13 new es/en keys) but no schema or migration and no
+cross-repo contract, so Merge Policy A's merge-on-green applies. `git switch main`; `git merge
+--no-ff feat/body-avatar-3d-visor-1`.
+
+**Open followup, for the real mesh.** `figura-v0.json` is an interim, SDF-primitive stand-in
+(ruling 8's own honesty line says so on screen); `avatar3d.js`'s `construirFigura` is the seam a
+later slice replaces once a real anatomy mesh exists -- nothing in `visor.js` or the template
+needs to change for that swap, only the figure JSON and, if the real mesh needs it, the primitive
+builder itself.

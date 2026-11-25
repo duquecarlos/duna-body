@@ -697,8 +697,22 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     if grupos_limitados:
         nombres_zonas = [t("entreno.categoria." + z) for z in anatomia.CATEGORIA_ENUM if z in zonas]
         caption_limitada = t("cuerpo.caption.en_recuperacion", zonas=_lista_natural(t, nombres_zonas))
-    return {"vistas": anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes), "caption": caption,
-            "caption_limitada": caption_limitada, "recorte": "completo"}
+    vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes)
+    return {"vistas": vistas, "caption": caption, "caption_limitada": caption_limitada,
+            "recorte": "completo", "cuerpo3d": _cuerpo3d_ctx(t, vistas)}
+
+
+def _cuerpo3d_ctx(t: T, vistas: list[dict]) -> dict:
+    """BODY-AVATAR-3D-VISOR-1 ruling 5: Hoy's own small JSON blob for the optional 3D viewer's tap
+    line -- REGIONES-1's own `regiones` state map (the same dict every view in `vistas` already
+    carries, read once here rather than a second anatomia call), each region's display name and
+    the viewer's four state words. Hoy-only: Tendencias and Turnos build their own `contexto()`
+    call directly, never through this function, so neither carries this key and the macro's own
+    `{% if cuerpo.cuerpo3d %}` gate stays true on Hoy alone. This blob is the only 3D-related
+    weight every Hoy visit pays (ruling 3) -- the viewer script, the figure and its images are a
+    separate fetch the template only triggers once 3D is actually chosen."""
+    return {"regiones": vistas[0]["regiones"], "nombres": anatomia.etiquetas_regiones(t),
+            "estados_texto": anatomia.etiquetas_estado3d(t)}
 
 
 def _hoy_turno_ctx(t: T, turno: dict) -> dict:

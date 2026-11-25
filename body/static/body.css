@@ -28,6 +28,9 @@
   /* BODY-HOY-ESCRITORIO-1 ruling 1: Hoy's own top-row right column width, named once rather than
      repeated as a literal 280px/400px wherever the grid or its figure cap need it. */
   --hoy-figura-min:280px; --hoy-figura-max:400px; --hoy-figura-parte:36%;
+  /* BODY-AVATAR-3D-VISOR-1 ruling 6: the 3D viewer's own hatch (the "limited" look) and organ
+     tint -- the mock's own two tokens, read with getComputedStyle, never hardcoded in the JS. */
+  --cuerpo3d-raya:#8F8C86; --cuerpo3d-organo:#D98E98;
   color-scheme: light;
 }
 :root[data-theme="dark"]{
@@ -35,6 +38,7 @@
   --ink:#F2F1EC; --ink2:#C9C6BF; --muted:#A09D95; --amber-deep:#E0A33A; --amber-tint:#3A2E17;
   --night-tint:#26313C; --day-tint:#3A2E17; --ok:#7DB282; --body:#7DB282; --danger:#E07A5F; --est:#D9B26A;
   --viaje:#B79CE8;
+  --cuerpo3d-raya:#9A978F; --cuerpo3d-organo:#C9808B;
   --focus:#9DB7CF; color-scheme: dark;
 }
 *{box-sizing:border-box}
@@ -485,7 +489,7 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
    `@media (prefers-reduced-motion: reduce){*{transition:none!important}}` rule above, no separate
    rule needed here. ---------- */
 .cuerpo-card{padding:16px}
-.cuerpo-vista-track{position:relative;border-radius:12px;overflow:hidden;background:var(--wash);aspect-ratio:1080/1935;touch-action:pan-y}
+.cuerpo-vista-track,.cuerpo3d-track{position:relative;border-radius:12px;overflow:hidden;background:var(--wash);aspect-ratio:1080/1935;touch-action:pan-y}
 .cuerpo-vista[data-recorte="torso"] .cuerpo-vista-track{aspect-ratio:343/260}
 .cuerpo-vista[data-recorte="cabeza"] .cuerpo-vista-track{aspect-ratio:343/240}
 .cuerpo-vista-capa{position:absolute;inset:0;opacity:0;transition:opacity .25s}
@@ -524,6 +528,19 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
 .cuerpo-vista-swipe{margin-left:auto;font-size:12px;color:var(--muted)}
 .cuerpo-caption{color:var(--muted);font-size:13px;line-height:1.45;margin:10px 0 0}
 
+/* BODY-AVATAR-3D-VISOR-1 ruling 3: the 2D/3D switch -- hidden by default (visor.js only reveals
+   it once it has feature-detected WebGL2), same pill shape as `.cuerpo-vista-btn` so it reads as
+   part of the same card. ruling 5: `.cuerpo3d-track` gets its own class (never literally
+   `cuerpo-vista-track`, which tests/test_hoy_escritorio.py counts by name on the page) but shares
+   its box (aspect ratio, background, the `.hoy-figura` height cap) through the selector list
+   above and below -- only the canvas inside it is new. */
+.cuerpo3d-seg{display:inline-flex;background:var(--inset);border-radius:999px;padding:3px;margin-bottom:10px}
+.cuerpo3d-btn{all:unset;cursor:pointer;min-height:38px;min-width:44px;padding:0 14px;border-radius:999px;font:500 13px inherit;color:var(--ink2);display:inline-flex;align-items:center;justify-content:center}
+.cuerpo3d-btn.on{background:var(--card);color:var(--ink);font-weight:600}
+.cuerpo3d-btn:focus-visible{outline:2px solid var(--focus)}
+.cuerpo3d-lienzo{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y}
+.cuerpo3d-pista{position:absolute;left:10px;bottom:8px;font-size:12px;color:var(--muted);pointer-events:none}
+
 /* ---------- Hoy's own top block (BODY-HOY-ESCRITORIO-1 rulings 1-2): phone keeps plain DOM order
    (score hero, "El día por delante", THEN the figure -- Carlos's own words: the figure filling the
    screen first showed nothing useful); from 768px `.hoy-top` becomes a two-column grid so the
@@ -533,12 +550,16 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
 @media (min-width:768px){
   .hoy-top{display:grid;grid-template-columns:minmax(0,1fr) clamp(var(--hoy-figura-min),var(--hoy-figura-parte),var(--hoy-figura-max));gap:16px;align-items:start}
   .hoy-figura .cuerpo-vista-track{max-height:min(78vh,720px)}
+  .hoy-figura .cuerpo3d-track{max-height:min(78vh,720px)}
 }
 /* Phone-only (BODY-HOY-ESCRITORIO-1-C): scoped by max-width, below the >=768px block above, so the
    desktop/tablet cap (`min(78vh,720px)`) is the one that wins from 768px -- unscoped, this rule sat
    AFTER the min-width block at equal specificity and won at every width by source order alone. */
 @media (max-width:767.98px){
   .hoy-figura .cuerpo-vista-track{max-height:60vh;max-height:60svh}
+}
+@media (max-width:767.98px){
+  .hoy-figura .cuerpo3d-track{max-height:60vh;max-height:60svh}
 }
 .hoy-figura .cuerpo-vista-img{object-fit:contain}
 
