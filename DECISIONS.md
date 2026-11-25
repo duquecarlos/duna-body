@@ -35123,3 +35123,90 @@ unchanged itself), no schema or migration, no cross-repo contract -- merge polic
 `de81e0e40a31f73eaad510b28e73c603e0416126` -- proven identical, no re-run needed past that check. Branch
 `feat/body-reentrada-escala-1` deleted (`git branch -d`). Not deployed, not pushed.
 
+
+## BODY-REVISION-SYNC-READINESS-1
+
+Fixes three findings from BODY-REVISION-1-INV (Carlos, via the Personal desk: "go browse fully body App and
+look for improvements fixes and new ideas"): finding 1 (Today's two "last synced" times disagreed and neither
+said which one it was), finding 2 (Day showed readiness "—" for today while Today showed a score, because Day
+read a *stored* metric that hosted pulls never wrote), finding 11c (the same root cause left Trends' readiness
+chart ending months before the other charts).
+
+**Ruling 1 (one readiness everywhere).** Added `_recalcular_readiness_seguro(conn, person_id)` to `body/pull.py`,
+calling the SAME `readiness.recompute_all` the local branch's own daily loop already called — never a second
+implementation. Wired into the three hosted paths that save days: `_pull_persona` (the ok branch, after the
+existing three recalcs), `_pull_hoy_persona`, and `pull_backfill_hosted`'s per-person loop. Same safe-wrapper
+shape as the sibling recalcs (caught, printed as a counts-only line with the exception type, never stops the
+pull for this or the next person). Readiness is derived from this person's own stored metrics, so recomputing
+their whole history on every pull is idempotent; the nightly backfill's own reach widens a little more each run,
+so stored history fills in gradually with no one-off command.
+
+**Ruling 2 (Day and Today agree).** `body/rutas/hoy.py`'s `day_view()` now calls `readiness.compute(conn, key,
+person_id)` live for the "readiness" card — the SAME function `today()` and `how()` already call for the same
+day — instead of reading `vals.get("readiness")`, a stored row a hosted pull might never have written. Day,
+Today and the stored value can never disagree by construction.
+
+**Ruling 3 (two sync facts, two names).** Split the hero's sync line from the tile caption in `body/rutas/hoy.py`:
+`_synced()` keeps its original bare-"HH:MM"-or-None contract for the partial-day tiles' "as of HH:MM" caption,
+unchanged. A new `_sync_hero_ctx(t, conn, person)` reads `garmin_cuenta.estado_sync` and names which fact it
+shows: the watch's own last contact with Garmin when that fact exists (`today.synced_reloj`, a new key), else
+Body's own last successful pull (`today.synced`), either way only when that instant falls on today's own local
+date. `body/templates/today.html` now renders the hero's own already-worded line (`{{ synced or t('today.no_sync')
+}}`) instead of composing a prefix + bare time, so it can never say "synced" twice about two different things.
+Changed strings (`body/i18n/es.json`, `body/i18n/en.json`):
+- `today.synced`: es "Reloj sincronizado" → "Body actualizó tus datos a las"; en "Watch synced" → "Body
+  updated your data at"
+- `today.synced_reloj` (new key): es "Tu reloj se sincronizó con Garmin a las"; en "Your watch last synced
+  with Garmin at"
+- `today.no_sync`: es "Sin sincronizar hoy" → "Sin actualizaciones hoy"; en "Not synced today" → "No
+  updates today"
+Screen/element: Today's score hero (finding 1). `tests/test_mock_r2_hoy.py` updated its 3 pinned occurrences of
+the old Spanish/English strings to match.
+
+**Ruling 4 (Trends readiness chart reaches the same end).** No production change needed — `profile.metric_
+profile` already reads stored readiness like any other metric; the gap was purely that nothing stored it for
+hosted pulls (ruling 1 fixes that). Pinned by a new test on synthetic data in `tests/test_tendencias_todas.py`
+(`ReadinessChartReachesTheSameEndAsOtherSeriesTest`): seeds 60 days of five core metrics, calls
+`readiness.recompute_all`, and asserts `profile.metric_profile(..., "readiness")`'s last month equals
+`resting_hr`'s last month. Screen/element: Trends' readiness chart (finding 11c).
+
+**New tests.** `tests/test_hoy.py::SyncHeroCtxTest` (6 tests) pins `_sync_hero_ctx`'s priority order (watch fact
+over Body's own pull, both named differently in es/en, an older fact is None not a stale clock) and that `_synced`'s
+bare-time contract for the tile caption is unaffected. `tests/test_pull.py::ReadinessHostedRecomputeTest` (3
+tests) pins that `pull_hosted`, `pull_hoy_todos`/`pull_hoy_ahora`, and `pull_backfill_hosted` each leave
+`baselines.MIN_DAYS` fewer stored readiness days than seeded days (the first 7 of 31 seeded days have no valid
+baseline, so `readiness.compute` returns `None` and `db.set_metric` deletes rather than stores them — 24, not
+31). `tests/test_hoy_escritorio.py::ReadinessAgreesAcrossTodayDiaStoredTest` pins ruling 2 end-to-end in hosted
+mode: seeds 31 days, calls `readiness.update`, then asserts Today's rendered score, Day's rendered score, and
+the stored `daily_metric` row are all equal. Screen/element: Day's readiness card (finding 2).
+
+Confirmed via full runs of `tests.test_rendimiento` and `tests.test_i18n_paridad` that neither guard needed a
+change: the two new SQL statements added (`garmin_cuenta.estado_sync` on `/`, `readiness.compute` on
+`/day/{day}`) stay under the existing ceilings (155 and 81), and no new literal-key or placeholder mismatch was
+introduced.
+
+Touches stayed inside: `body/rutas/hoy.py`, `body/templates/today.html`, `body/pull.py`, `body/i18n/es.json`,
+`body/i18n/en.json`, `tests/test_hoy.py`, `tests/test_hoy_escritorio.py`, `tests/test_pull.py`,
+`tests/test_tendencias_todas.py`, `tests/test_mock_r2_hoy.py`, `DECISIONS.md`. `body/readiness.py`,
+`body/templates/_reloj.html` and `body/templates/day.html` needed no change — the existing functions and
+templates already sufficed once fed the right value.
+
+Committed on `feat/body-revision-sync-readiness-1` as `ab59032c89aab45ef31ff5ade17b14ede45b60a0` before the
+whole gate (base `main` at `50bbd0c7806fc3ca10dbc1947944c0ac3a354cac`).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 25 foreground chunks of 10 dotted
+modules each (246 modules total; the last chunk held the remaining 6). Per-chunk counts: 220, 194, 223, 290,
+190, 181, 281, 148, 127, 250, 283, 376, 200, 273, 282, 258, 234, 392, 191, 175, 161, 228, 290, 195, 92 — summing
+to **5734**. Reconciled against an independent `unittest.TestLoader().discover("tests", top_level_dir=".")`
+collect-only count on the same tree, which also returned **5734** — exact match. Every chunk OK; no failures,
+no errors. One chunk (modules 91-100, holding the slow `test_garmin_host`) ran past the 600s foreground cap and
+was auto-backgrounded; its own output was read to completion rather than guessed (250 tests, 1001.250s, OK)
+before continuing.
+
+**Merge.** Customer-facing bytes changed (the three `today.synced*` strings above, es and en) — Merge Policy
+A's customer-bytes condition is met, but this slice's own dispatch explicitly authorized the merge on green
+despite that ("YOU MAY MERGE"), so the merge proceeded rather than stopping for approval. No schema or
+migration, no cross-repo contract. `git checkout main`; `git merge --no-ff feat/body-revision-sync-readiness-1`
+-> merge commit `3e1bc67106996dbb70615b63630e8de75359135d`. Tree identity: the branch tip's own tree and the
+merge commit's own tree are BOTH `fe348fad1f18dfdfb08030e9dd3b834315530121` — proven identical. Branch
+`feat/body-revision-sync-readiness-1` deleted (`git branch -d`). Not deployed, not pushed.
