@@ -86,6 +86,7 @@ def _render_picker(conn, person_id: int, person: dict, t: T, q: str | None, line
     return comun._render(
         "comida_productos.html", t=t, tab="today", q=q or "", productos=_productos_ctx(conn, person_id, q),
         draft=draft, unidad_opciones=_unidad_opciones(t), nutriente_campos=nutriente_campos, error=error,
+        turnos=db.trabaja_turnos_si(conn, person_id),
     )
 
 
@@ -110,6 +111,7 @@ def comida_productos_view(q: str | None = None, linea: list[str] = Query(default
         "comida_productos.html", t=t, tab="today", q=q or "", productos=_productos_ctx(conn, person_id, q),
         draft=_resolver_draft(conn, person_id, t, lineas), unidad_opciones=_unidad_opciones(t),
         nutriente_campos=[{"key": k, "label": t("metric." + k)} for k in db.INGESTA_METRIC_KEYS], error=None,
+        turnos=db.trabaja_turnos_si(conn, person_id),
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp

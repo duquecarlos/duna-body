@@ -1625,7 +1625,7 @@
   "comida.productos.guardar_comida": "Guardar comida",
   "comida.productos.nuevo": "Nuevo producto",
   "comida.productos.desde_hoy": "Registrar desde tus productos",
-  "comida.productos.fuente_etiqueta": "Según la etiqueta",
+  "comida.productos.fuente_etiqueta": "Según la etiqueta: por 100 g para gramos, por 100 ml para mililitros, o por porción para unidad.",
   "comida.productos.nombre_label": "Nombre",
   "comida.productos.marca_label": "Marca (opcional)",
   "comida.productos.tamano_label": "Tamaño (opcional)",

@@ -1625,7 +1625,7 @@
   "comida.productos.guardar_comida": "Save meal",
   "comida.productos.nuevo": "New product",
   "comida.productos.desde_hoy": "Log from your products",
-  "comida.productos.fuente_etiqueta": "From the label",
+  "comida.productos.fuente_etiqueta": "According to the label: per 100 g for grams, per 100 ml for milliliters, or per portion for unit.",
   "comida.productos.nombre_label": "Name",
   "comida.productos.marca_label": "Brand (optional)",
   "comida.productos.tamano_label": "Size (optional)",
