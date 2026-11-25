@@ -1,23 +1,29 @@
 """body/rutas/hoy.py's own pure helpers, direct -- BODY-MOCK-R2-HOY-1's "day ahead" merge/sort
 (ruling 2), the tile band word (ruling 4), and the night-week-ahead lookup (ruling 6). The route-
 level rendering of these is covered by tests/test_mock_r2_hoy.py; this file is the logic underneath
-it, so a sort or classification bug is caught without rendering a page."""
+it, so a sort or classification bug is caught without rendering a page.
+
+BODY-REVISION-SYNC-READINESS-1 ruling 3 adds `_synced` itself (the score hero's own one-line sync
+fact), direct -- no network, invented demo data only."""
+import os
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, goals, turnos_costo
+from body import db, garmin_cuenta, goals, turnos_costo
 from body.baselines import Baseline
 from body.i18n import T
 from body.rutas import hoy
 
 ES = T("es")
 EN = T("en")
+TOKEN_KEY_HEX = "22" * 32
 
 
 def _mkconn(case: unittest.TestCase) -> "db.sqlite3.Connection":
@@ -212,6 +218,72 @@ class SemanaNocturnaCtxTest(unittest.TestCase):
         ctx = hoy._semana_nocturna_ctx(ES, conn, 1, hoy_d)
         self.assertIsNotNone(ctx)
         self.assertEqual(ctx["recuperacion"], ES("today.semana_nocturna.sin_dato"))
+
+
+class SyncHeroCtxTest(unittest.TestCase):
+    """BODY-REVISION-SYNC-READINESS-1 ruling 3: the score hero's own one-line sync fact -- never
+    two lines that both claim "synced" about a different thing. The watch's own last contact with
+    Garmin when that fact exists (the SAME field "Tu reloj"'s own card reads), named as the
+    watch's own; otherwise Body's own last successful pull, named as Body's own; either way, only
+    for an instant that falls on today's own local date."""
+
+    def setUp(self):
+        self.conn = _mkconn(self)
+        self.person = db.person(self.conn, 1)
+        env_patcher = mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX})
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
+    def _registrar_pull_de_body(self, cuando: datetime) -> None:
+        self.conn.execute(
+            "INSERT INTO raw_payload (person_id, day, kind, source, fetched_at, payload) "
+            "VALUES (1, ?, 'resumen', 'garmin', ?, '{}')",
+            (cuando.date().isoformat(), cuando.isoformat()),
+        )
+        self.conn.commit()
+
+    def test_no_fact_at_all_is_none(self):
+        self.assertIsNone(hoy._sync_hero_ctx(ES, self.conn, self.person))
+
+    def test_bodys_own_pull_today_is_named_as_bodys(self):
+        self._registrar_pull_de_body(datetime.now(timezone.utc))
+        texto = hoy._sync_hero_ctx(ES, self.conn, self.person)
+        self.assertIsNotNone(texto)
+        self.assertTrue(texto.startswith(ES("today.synced")))
+        self.assertNotIn(ES("today.synced_reloj"), texto)
+
+    def test_watch_fact_today_is_preferred_over_bodys_own_pull(self):
+        self._registrar_pull_de_body(datetime.now(timezone.utc) - timedelta(hours=1))
+        garmin_cuenta.guardar(self.conn, 1, "tok")
+        garmin_cuenta.registrar_reloj_sincronizo(self.conn, 1, datetime.now(timezone.utc))
+        self.conn.commit()
+        texto = hoy._sync_hero_ctx(ES, self.conn, self.person)
+        self.assertTrue(texto.startswith(ES("today.synced_reloj")))
+
+    def test_an_older_watch_fact_is_none_not_a_stale_clock(self):
+        garmin_cuenta.guardar(self.conn, 1, "tok")
+        garmin_cuenta.registrar_reloj_sincronizo(self.conn, 1, datetime.now(timezone.utc) - timedelta(days=3))
+        self.conn.commit()
+        self.assertIsNone(hoy._sync_hero_ctx(ES, self.conn, self.person))
+
+    def test_english_wording_names_each_subject_differently(self):
+        self._registrar_pull_de_body(datetime.now(timezone.utc))
+        texto = hoy._sync_hero_ctx(EN, self.conn, self.person)
+        self.assertTrue(texto.startswith(EN("today.synced")))
+        self.assertNotIn("Watch", texto)
+
+    def test_the_bare_caption_time_is_unaffected_by_the_watch_fact(self):
+        """`_synced` -- the partial-day tiles' own "as of HH:MM" caption -- stays Body's own pull,
+        a bare time, even when a watch fact also exists and would win in the hero."""
+        ahora = datetime.now(timezone.utc)
+        self._registrar_pull_de_body(ahora)
+        sin_reloj = hoy._synced(self.conn, self.person)
+        self.assertIsNotNone(sin_reloj)
+        self.assertNotIn(" ", sin_reloj)  # a bare "HH:MM", never a prefixed sentence
+        garmin_cuenta.guardar(self.conn, 1, "tok")
+        garmin_cuenta.registrar_reloj_sincronizo(self.conn, 1, ahora - timedelta(hours=2))
+        self.conn.commit()
+        self.assertEqual(hoy._synced(self.conn, self.person), sin_reloj)
 
 
 if __name__ == "__main__":

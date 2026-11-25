@@ -6,11 +6,12 @@ worked, dashed for whatever today's plan still owes). BODY-HOY-ESCRITORIO-2 adds
 then the "Tell Body" row, from 768px -- the mock's desktop order, placed with `order`/`flex` on the
 phone's own unchanged DOM (`.hoy-abajo`, which replaces the now-dead `.cols-hoy`)."""
 import json
+import os
 import pathlib
 import re
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -18,7 +19,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, demo, fechas, identity, web
+from body import config, cuenta, db, demo, fechas, identity, readiness, web
 from body.rutas import comun
 
 client = TestClient(web.app, follow_redirects=False)
@@ -407,6 +408,55 @@ class HoyAbajoBlockCssTest(unittest.TestCase):
         plus the 16px gap (576px) comfortably fit inside it, so noticed/week keep two columns with
         no extra CSS needed under `[data-ancho="lectura"]` for that pair."""
         self.assertIn('[data-ancho="lectura"].wrap{max-width:820px', self.compact)
+
+
+class ReadinessAgreesAcrossTodayDiaStoredTest(unittest.TestCase):
+    """BODY-REVISION-SYNC-READINESS-1 ruling 2: for one invented day, Today's own score, Día's
+    own score and the stored value are all equal -- in hosted mode too, where the bug actually
+    lived (a hosted pull never stored readiness at all, BODY-GARMIN-SYNC-CONSISTENTE-1's own
+    gap -- ruling 1 fixes the storage, this test pins that the two screens read it the same way
+    `readiness.update` itself stores it). Invented demo data only, no real health figures."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+        env_patcher = mock.patch.dict(os.environ, {cuenta.ISSUER_ENV: "https://fake-cuenta-escritorio.test"})
+        env_patcher.start()
+        self.addCleanup(env_patcher.stop)
+
+    def _seed_historia(self, pid: int, day: str) -> None:
+        start = date.fromisoformat(day) - timedelta(30)
+        for i in range(31):
+            d = (start + timedelta(i)).isoformat()
+            wobble = (-1) ** i  # alternating +/-1 so the baseline's own spread is never zero
+            for k, v in (("hrv_last_night", 50 + 2 * wobble), ("resting_hr", 55 + wobble),
+                         ("stress_avg", 30 + 3 * wobble), ("sleep_minutes", 450),
+                         ("sleep_need_min", 480), ("body_battery_wake", 75)):
+                db.set_metric(self.conn, d, k, v, "garmin", pid)
+        self.conn.commit()
+
+    def test_today_dia_and_stored_value_agree_in_hosted_mode(self):
+        self.assertTrue(cuenta.hosted())
+        pid = _mk_person(self.conn)
+        day = "2026-11-20"
+        self._seed_historia(pid, day)
+        readiness.update(self.conn, day, pid)  # the exact call ruling 1 now wires into every
+        # hosted pull path -- simulated directly here since this test's own subject is ruling 2
+        # (the read side), not ruling 1 (already pinned in tests/test_pull.py).
+        stored = self.conn.execute(
+            "SELECT value FROM daily_metric WHERE person_id=? AND day=? AND metric_key='readiness'",
+            (pid, day),
+        ).fetchone()["value"]
+        self.assertIsNotNone(stored)
+        _use(pid)
+
+        today_page = client.get("/").text
+        self.assertIn(f'class="big">{int(stored)}<', today_page)
+
+        day_page = client.get(f"/day/{day}").text
+        start = day_page.index('id="readiness"')
+        end = day_page.index("</a>", start)
+        tile = day_page[start:end]
+        self.assertIn(f'{int(stored)}<span class="u">', tile)
 
 
 if __name__ == "__main__":

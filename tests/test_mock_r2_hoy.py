@@ -59,7 +59,7 @@ class BoardOrderTest(unittest.TestCase):
     def test_order_es(self):
         _seed_demo(self, "orden_es.db", "es")
         page = TestClient(web.app, follow_redirects=False).get("/").text
-        marks = ['class="card est"', "Reloj sincronizado", "El día por delante",
+        marks = ['class="card est"', "Body actualizó", "El día por delante",
                  "cuerpo-vista", 'class="tellbody', "Body lo notó",
                  'class="grid2', "Ventana de comida", "Semana nocturna por delante"]
         positions = [page.index(m) for m in marks]
@@ -68,7 +68,7 @@ class BoardOrderTest(unittest.TestCase):
     def test_order_en(self):
         _seed_demo(self, "orden_en.db", "en")
         page = TestClient(web.app, follow_redirects=False).get("/").text
-        marks = ['class="card est"', "Watch synced", "The day ahead",
+        marks = ['class="card est"', "Body updated", "The day ahead",
                  "cuerpo-vista", 'class="tellbody', "Body noticed",
                  'class="grid2', "Eating window", "Night week ahead"]
         positions = [page.index(m) for m in marks]
@@ -82,7 +82,7 @@ class BoardOrderTest(unittest.TestCase):
         self.assertNotIn('<div class="meta">', page)
         hero_start = page.index('class="card est"')
         hero_end = page.index("</a>", hero_start)
-        self.assertIn("Reloj sincronizado", page[hero_start:hero_end])
+        self.assertIn("Body actualizó", page[hero_start:hero_end])
 
 
 class DiaPorDelanteRenderTest(unittest.TestCase):

@@ -37,7 +37,7 @@
   </div>
   <div class="k mt-6">{{ t('today.ready_label') }}</div>
   <p class="read">{{ reading }}</p>
-  <div class="k mt-6">{% if synced %}{{ t('today.synced') }} {{ synced }}{% else %}{{ t('today.no_sync') }}{% endif %}</div>
+  <div class="k mt-6">{{ synced or t('today.no_sync') }}</div>
   {% else %}
   <div class="fig c-muted">{{ t('today.no_score_short') }}</div>
   <p class="read">{{ t('today.no_score', missing=missing_txt) }}</p>

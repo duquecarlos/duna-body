@@ -145,12 +145,45 @@ def _debe_lanzar_pull_hoy(conn, person_id: int) -> bool:
 
 
 def _synced(conn, person) -> str | None:
+    """Body's own last successful pull, today's own bare HH:MM or None -- the partial-day tiles'
+    own "as of HH:MM" caption (`today.tile.hasta`) reads this unchanged; the score hero's own
+    sync line is `_sync_hero_ctx` below, never this (BODY-REVISION-SYNC-READINESS-1 ruling 3: the
+    two read differently on purpose, so a bare time meant for a caption never leaks a prefix
+    sentence into it)."""
     ts = db.last_sync(conn, person["id"])
     if not ts:
         return None
     tz = ZoneInfo(person.get("timezone") or "America/Bogota")
     local = datetime.fromisoformat(ts).astimezone(tz)
     return local.strftime("%H:%M") if local.date() == datetime.now(tz).date() else None
+
+
+def _sync_hero_ctx(t: T, conn, person) -> str | None:
+    """BODY-REVISION-SYNC-READINESS-1 ruling 3: the score hero's own one-line sync fact -- never
+    two lines that both claim "synced" about a different thing. The watch's own last contact with
+    Garmin, when that fact exists (`garmin_cuenta.estado_sync`'s own `reloj_sincronizo_en` --
+    exactly the field "Tu reloj"'s own `reloj_vivo.ultimo_sync` reads, never a second read of it),
+    named as the watch's own; otherwise (local mode, which tracks no separate watch-contact
+    instant, or hosted before a first watch contact is ever recorded) Body's own last successful
+    pull (`estado_sync`'s own `ultimo_ok_en`, `db.last_sync` underneath -- the SAME fact `_synced`
+    above reads for the tiles' own caption, read again here rather than shared, since the two
+    calls' own "today" gates can differ by a tick), named as Body's own -- the hero holds one
+    line, so of the two it is the one that exists, and the watch's one when both do. Either way,
+    only when that instant falls on TODAY's own local date, same as before this ruling -- an older
+    instant leaves this None, so `_stale_ctx`'s own sentence (or the plain "no update yet" line)
+    takes over instead of a stale clock here."""
+    estado = garmin_cuenta.estado_sync(conn, person["id"])
+    if estado["reloj_sincronizo_en"] is not None:
+        ts, clave = estado["reloj_sincronizo_en"], "today.synced_reloj"
+    else:
+        ts, clave = estado["ultimo_ok_en"], "today.synced"
+    if not ts:
+        return None
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    local = datetime.fromisoformat(ts).astimezone(tz)
+    if local.date() != datetime.now(tz).date():
+        return None
+    return f"{t(clave)} {local.strftime('%H:%M')}"
 
 
 def _parse_day(day: str) -> date:
@@ -833,6 +866,7 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
         ready_avg = round(rb.mean)
         ready_delta, ready_cls = _delta(conn, t, defs["readiness"], day, r.score, person_id)
     synced = _synced(conn, person)
+    sync_hero = _sync_hero_ctx(t, conn, person)
     es_hoy = day == today_local.isoformat()
     correcciones_hoy = db.despertar_correcciones(conn, person_id, day)
     cards = []
@@ -855,7 +889,7 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                       "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls,
                       "banda": banda, "caption": caption, "corregido": corregido})
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
-                   synced=synced, stale=_stale_ctx(t, day, today_local),
+                   synced=sync_hero, stale=_stale_ctx(t, day, today_local),
                    garmin_sync=garmin_rutas._garmin_sync_ctx(t, conn, person_id, day, today_local),
                    reloj_vivo=garmin_rutas._reloj_vivo_ctx(t, conn, person_id, person, today_local), cuerpo=cuerpo_ctx,
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
@@ -1397,6 +1431,12 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     data = db.load_day(conn, key, person_id)
     vals = {m["key"]: m["value"] for m in data["metrics"]}
     defs = comun._defs(conn)
+    # BODY-REVISION-SYNC-READINESS-1 ruling 2: Día's own "readiness" card below reads this LIVE
+    # figure, never `vals.get("readiness")` (a stored row a hosted pull might never have written,
+    # BODY-GARMIN-SYNC-CONSISTENTE-1's own gap -- ruling 1 fixes the storage side, this fixes the
+    # read side) -- the SAME function Hoy's today() and /how/{day} already call for the same day,
+    # so the three can never disagree.
+    r_dia = readiness.compute(conn, key, person_id)
     # BODY-DESPLAZAMIENTO-3-M fix 1 (ruling 3): a registered source with no value at all for THIS
     # day shows none of its rows here -- never a row of bare "—"s. A source with at least one value
     # keeps showing all of its keys, same as today (a missing one of them may still read "—").
@@ -1408,7 +1448,7 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
             continue
         if fuentes.fuente_de_metrica(k) in fuentes_sin_datos_hoy:
             continue
-        v = vals.get(k)
+        v = r_dia.score if k == "readiness" else vals.get(k)
         delta, cls = _delta(conn, t, df, key, v, person_id)
         href = _tendencias_href(k, "dia", key, today_local) if v is not None else None
         cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v), "raw": v,

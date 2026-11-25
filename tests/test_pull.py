@@ -31,7 +31,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, garmin_adapter, garmin_cuenta, pull
+from body import baselines, db, garmin_adapter, garmin_cuenta, pull
 
 TOKEN_KEY_HEX = "44" * 32
 
@@ -298,6 +298,83 @@ class HostedScheduledPullWiringTest(unittest.TestCase):
              mock.patch("body.pull._pull_detalle_pendientes") as m_detalle:
             pull.pull_hosted(self.conn, fecha="2026-11-09")
         m_detalle.assert_not_called()
+
+
+_SEED_DAYS = 31  # a round number comfortably over baselines.MIN_DAYS, so some days get a score
+
+
+def _seed_historia_readiness(conn, person_id: int, start: date, days: int) -> None:
+    """`days` synthetic days, every metric readiness.compute needs, no readiness row of its own
+    -- so a test can tell whether a pull path stored it. Invented data only."""
+    for i in range(days):
+        d = (start + timedelta(i)).isoformat()
+        wobble = (-1) ** i  # alternating +/-1 so the baseline's own spread is never zero
+        for k, v in (("hrv_last_night", 50 + 2 * wobble), ("resting_hr", 55 + wobble),
+                     ("stress_avg", 30 + 3 * wobble), ("sleep_minutes", 450),
+                     ("sleep_need_min", 480), ("body_battery_wake", 75)):
+            db.set_metric(conn, d, k, v, "garmin", person_id)
+    conn.commit()
+
+
+def _readiness_days(conn, person_id: int) -> set:
+    rows = conn.execute(
+        "SELECT day FROM daily_metric WHERE person_id=? AND metric_key='readiness'", (person_id,)
+    ).fetchall()
+    return {r["day"] for r in rows}
+
+
+class ReadinessHostedRecomputeTest(unittest.TestCase):
+    """BODY-REVISION-SYNC-READINESS-1 ruling 1: every hosted path that saves a day also stores
+    readiness -- the SAME `readiness.recompute_all` call the local branch's own daily loop makes
+    (never a second implementation), across the person's WHOLE stored history, not only the day
+    this run itself fetched. No network (fetch_day/fetch_device_last_sync both stubbed);
+    synthetic history only, never a real figure."""
+
+    def setUp(self):
+        self.conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "readiness_hosted.db")
+        db.init(self.conn)
+        self.addCleanup(self.conn.close)
+        env_patcher = mock.patch.dict(os.environ, {garmin_cuenta.KEY_ENV: TOKEN_KEY_HEX})
+        env_patcher.start(); self.addCleanup(env_patcher.stop)
+        sleep_patcher = mock.patch("body.pull.time.sleep")
+        sleep_patcher.start(); self.addCleanup(sleep_patcher.stop)
+        reloj_patcher = mock.patch(
+            "body.pull.garmin_adapter.fetch_device_last_sync", side_effect=lambda token_str=None: (None, token_str))
+        reloj_patcher.start(); self.addCleanup(reloj_patcher.stop)
+        garmin_cuenta.guardar(self.conn, 1, "tok-before")
+        self.conn.commit()
+
+    def test_pull_hosted_recomputes_readiness_across_the_whole_stored_history(self):
+        start = date.today() - timedelta(_SEED_DAYS)
+        _seed_historia_readiness(self.conn, 1, start, _SEED_DAYS)
+        self.assertEqual(_readiness_days(self.conn, 1), set())
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_empty_fetch_day), \
+             mock.patch("body.pull.privacidad.guarda_detalle", return_value=False):
+            pull.pull_hosted(self.conn)
+        # The first MIN_DAYS of the seeded history have no 7-day-prior baseline yet (the honest
+        # gap, same as any other day) -- every day AFTER that gets a stored score.
+        self.assertEqual(len(_readiness_days(self.conn, 1)), _SEED_DAYS - baselines.MIN_DAYS)
+
+    def test_pull_hoy_todos_also_recomputes_it(self):
+        start = date.today() - timedelta(_SEED_DAYS)
+        _seed_historia_readiness(self.conn, 1, start, _SEED_DAYS)
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_empty_fetch_day), \
+             mock.patch("body.pull._en_horas_quietas", return_value=False):
+            pull.pull_hoy_todos(self.conn)
+        self.assertEqual(len(_readiness_days(self.conn, 1)), _SEED_DAYS - baselines.MIN_DAYS)
+
+    def test_pull_backfill_hosted_recomputes_it_too_even_for_days_outside_this_runs_own_batch(self):
+        """The backfill's own batch fetches 15 NEW days near `hoy`; the seeded days sit well
+        outside the 90-day backfill window entirely -- proving `recompute_all`'s whole-history
+        reach, not just this run's own fetched days (ruling 1's own second sentence)."""
+        hoy = date(2026, 11, 20)
+        start = date(2026, 1, 1)  # far outside [hoy-90, hoy-1]
+        _seed_historia_readiness(self.conn, 1, start, _SEED_DAYS)
+        self.assertEqual(_readiness_days(self.conn, 1), set())
+        with mock.patch("body.pull.garmin_adapter.fetch_day", side_effect=_empty_fetch_day):
+            ok, failed, saved = pull.pull_backfill_hosted(self.conn, hoy=hoy)
+        self.assertEqual((ok, failed), (1, 0))
+        self.assertEqual(len(_readiness_days(self.conn, 1)), _SEED_DAYS - baselines.MIN_DAYS)
 
 
 class PullDetallePendientesTest(unittest.TestCase):
