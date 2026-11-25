@@ -95,11 +95,25 @@ def _trabaja_turnos_card(html: str) -> str:
 
 
 class AjustesCardTest(_LocalModeTestCase):
-    def test_null_neither_button_on(self):
+    def test_null_without_shift_data_marks_no_on(self):
+        """BODY-REVISION-AJUSTES-NAV-PICKER-1 finding 7/ruling 1: the radio reads
+        db.trabaja_turnos_si(), the same answer every other screen uses -- never answered and no
+        shift data to infer from comes out False, same as an explicit "no"."""
         r = self.client.get("/settings")
         self.assertEqual(r.status_code, 200)
         card = _trabaja_turnos_card(r.text)
+        self.assertIn('btn on" name="valor" value="no"', card)
         self.assertNotIn('btn on" name="valor" value="si"', card)
+
+    def test_null_with_shift_data_marks_si_on(self):
+        """Ruling 1's own example: never answered, but shift data already exists -- inferred True,
+        same as every other screen (BODY-TURNOS-INFERIR-1), so "Sí" shows selected here too."""
+        self.conn.execute(
+            "INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-01-01', 'night', 'manual')")
+        self.conn.commit()
+        r = self.client.get("/settings")
+        card = _trabaja_turnos_card(r.text)
+        self.assertIn('btn on" name="valor" value="si"', card)
         self.assertNotIn('btn on" name="valor" value="no"', card)
 
     def test_si_marks_on(self):

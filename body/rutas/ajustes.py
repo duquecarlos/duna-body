@@ -96,14 +96,13 @@ def _lugares_estado_texto(t, conn, person: dict, person_id: int) -> str:
 def settings(person_id: int = Depends(identity.current_person_id)):
     conn, person, t = comun._ctx(person_id)
     nivel_datos = agente_ajustes.nivel_datos(conn, person_id)
-    trabaja_turnos = db.get_trabaja_turnos(conn, person_id)
     hh = household.household_of(conn, person_id)
     compartidas = {r["metric_key"] for r in compartir.mis_compartidas(conn, person_id)} if hh else set()
     metrics_compartir = [{"key": k, "label": t("metric." + k), "shared": k in compartidas}
                           for k in comun._defs(conn)] if hh else []
     defs = comun._defs(conn)
     return comun._render("settings.html", t=t, tab="settings", nivel_datos=nivel_datos,
-                   trabaja_turnos=trabaja_turnos, turnos=db.trabaja_turnos_si(conn, person_id),
+                   turnos=db.trabaja_turnos_si(conn, person_id),
                    lugares_estado_texto=_lugares_estado_texto(t, conn, person, person_id),
                    has_household=bool(hh), metrics_compartir=metrics_compartir,
                    aplicar_mcp=db.get_aplicar_mcp(conn, person_id),

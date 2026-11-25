@@ -540,6 +540,33 @@ class PickerRouteTest(unittest.TestCase):
         self.assertNotIn("linea=", r2.headers["location"])
 
 
+class PickerNavShiftsLinkTest(unittest.TestCase):
+    """BODY-REVISION-AJUSTES-NAV-PICKER-1 finding 13: the picker never threaded `turnos` into its
+    own render calls, so the nav's Shifts tab silently disappeared here even for a person who works
+    shifts. Covers both the plain GET and the error-reload path (_render_picker)."""
+
+    def setUp(self):
+        self.conn = _reset_web_db(self)
+        db.set_trabaja_turnos(self.conn, True, 1)
+        self.conn.commit()
+
+    def test_get_shows_the_shifts_tab(self):
+        r = client.get("/comida/productos")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('href="/shifts"', r.text)
+
+    def test_error_reload_still_shows_the_shifts_tab(self):
+        r = client.post("/comida/productos/guardar", data={"descripcion": "nada"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn('href="/shifts"', r.text)
+
+    def test_absent_for_a_person_who_does_not_work_shifts(self):
+        db.set_trabaja_turnos(self.conn, False, 1)
+        self.conn.commit()
+        r = client.get("/comida/productos")
+        self.assertNotIn('href="/shifts"', r.text)
+
+
 # ---- export / delete ------------------------------------------------------------------------------
 
 class PrivacyTest(unittest.TestCase):

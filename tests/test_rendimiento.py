@@ -162,6 +162,10 @@ client = TestClient(web.app, follow_redirects=False)
 # /comida/productos/agregar measured 13 (the sweep's own no-params call: the early-return path,
 # productos_visibles's own one-read visibility check, no product actually added), ceil(13 * 1.3) =
 # 17. Both well under _MAX_CONNECTIONS (2 measured for each).
+# BODY-REVISION-AJUSTES-NAV-PICKER-1 finding 13: /comida/productos now also threads
+# db.trabaja_turnos_si into its own render call (the nav's Shifts tab was silently dropping for a
+# person who works shifts). Measured 24 statements (22 before), still comfortably under 29 --
+# ceiling unchanged.
 _CEILINGS = {
     "/": 155,
     "/comida/productos": 29,
@@ -335,6 +339,38 @@ class RouteCostCeilingTest(unittest.TestCase):
         self.assertEqual(over_statements, [], f"route(s) over their statement ceiling: {over_statements}")
         self.assertEqual(over_connections, [],
                           f"route(s) opened more than {_MAX_CONNECTIONS} connections: {over_connections}")
+
+
+class NavShiftsLinkCensusTest(unittest.TestCase):
+    """BODY-REVISION-AJUSTES-NAV-PICKER-1 ruling 2: every screen that renders the shared nav must
+    carry its Shifts tab for a person who works shifts -- walks the SAME non-vacuous GET route set
+    `RouteCostCeilingTest` proves equal to `_CEILINGS` above, rather than a hand-picked sample, so a
+    future screen that forgets to thread `turnos` through its own render call is caught here instead
+    of being found by a person later (finding 13: body/rutas/comida.py's own picker was exactly
+    this)."""
+
+    def test_every_nav_bearing_route_carries_the_shifts_tab(self):
+        patcher = patch.object(web_comun, "_today_local", return_value=_ANCHOR)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        conn = _reset_db(self)
+        ids = _seed(conn)
+        db.set_trabaja_turnos(conn, True, 1)
+        conn.commit()
+
+        get_routes = [r for r in rutas_planas(web.app.routes) if "GET" in getattr(r, "methods", ())]
+        missing = []
+        checked = 0
+        for route in get_routes:
+            path = _fill(route.path, ids)
+            r = client.get(path)
+            if '<nav class="tabs"' in r.text:
+                checked += 1
+                if 'href="/shifts"' not in r.text:
+                    missing.append(route.path)
+
+        self.assertGreater(checked, 0, "no nav-bearing route was reached -- the sweep itself is broken")
+        self.assertEqual(missing, [], f"route(s) rendering the nav without the Shifts tab: {missing}")
 
 
 class ManyProposalShiftsCostTest(unittest.TestCase):
