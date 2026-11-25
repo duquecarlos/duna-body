@@ -40,7 +40,7 @@
       {% endfor %}
     </div>
     {% if cuerpo.cuerpo3d %}
-    <div class="cuerpo-vista-track cuerpo3d-track" hidden>
+    <div class="cuerpo3d-track" hidden>
       <canvas class="cuerpo3d-lienzo"
               data-script="{{ static_url('avatar/avatar3d.js') }}"
               data-figura="{{ static_url('avatar/figura-v0.json') }}"

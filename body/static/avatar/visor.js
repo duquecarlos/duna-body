@@ -79,7 +79,7 @@
       nombres: JSON.parse(nombresEl.textContent),
       estados_texto: JSON.parse(estadosTextoEl.textContent),
     };
-    var track2d = card.querySelector(".cuerpo-vista-track:not(.cuerpo3d-track)");
+    var track2d = card.querySelector(".cuerpo-vista-track");
     var track3d = card.querySelector(".cuerpo3d-track");
     var canvas = track3d.querySelector(".cuerpo3d-lienzo");
     var detalle = card.querySelector(".cuerpo3d-detalle");
