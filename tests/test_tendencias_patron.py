@@ -86,16 +86,16 @@ class FrasePatronTextoTest(unittest.TestCase):
     def test_vuelve_baja(self):
         frase = {"kind": "vuelve", "peor": "noche_1", "vuelta": "post_1", "direccion": "baja"}
         self.assertEqual(tendencias._frase_patron_texto(T("es"), frase),
-                          "Baja más la primera noche; vuelve a tu rango el día +1 después.")
+                          "Baja más la primera noche; vuelve a tu rango el día +1 después de un bloque de noches.")
         self.assertEqual(tendencias._frase_patron_texto(T("en"), frase),
-                          "Lowest on the first night; back in your range by day +1 after.")
+                          "Lowest on the first night; back in your range by day +1 after a night block.")
 
     def test_vuelve_sube(self):
         frase = {"kind": "vuelve", "peor": "noche_ultima", "vuelta": "post_2", "direccion": "sube"}
         self.assertEqual(tendencias._frase_patron_texto(T("es"), frase),
-                          "Sube más la última noche; vuelve a tu rango el día +2 después.")
+                          "Sube más la última noche; vuelve a tu rango el día +2 después de un bloque de noches.")
         self.assertEqual(tendencias._frase_patron_texto(T("en"), frase),
-                          "Highest on the last night; back in your range by day +2 after.")
+                          "Highest on the last night; back in your range by day +2 after a night block.")
 
     def test_no_vuelve_baja(self):
         frase = {"kind": "no_vuelve", "peor": "antes", "direccion": "baja"}
@@ -107,9 +107,10 @@ class FrasePatronTextoTest(unittest.TestCase):
     def test_no_vuelve_sube(self):
         frase = {"kind": "no_vuelve", "peor": "post_4", "direccion": "sube"}
         self.assertEqual(tendencias._frase_patron_texto(T("es"), frase),
-                          "Sube más el día +4 después; 4 días después aún no vuelve a tu rango.")
+                          "Sube más el día +4 después de un bloque de noches; 4 días después aún no vuelve a tu "
+                          "rango.")
         self.assertEqual(tendencias._frase_patron_texto(T("en"), frase),
-                          "Highest on day +4 after; 4 days after, not back in your range yet.")
+                          "Highest on day +4 after a night block; 4 days after, not back in your range yet.")
 
     def test_none_frase_is_no_caption(self):
         self.assertIsNone(tendencias._frase_patron_texto(T("es"), None))
@@ -197,7 +198,8 @@ class TrendsCaptionRenderedTest(unittest.TestCase):
             page = self.client.get("/trends").text
         chunk = self._chunk(page, "hrv_last_night")
         self.assertIn('class="read mt-4"', chunk)
-        self.assertIn("Baja más la primera noche; vuelve a tu rango el día +1 después.", chunk)
+        self.assertIn("Baja más la primera noche; vuelve a tu rango el día +1 después de un bloque de noches.",
+                      chunk)
 
     def test_en_caption_on_the_hrv_card(self):
         conn = db.connect()
@@ -207,7 +209,7 @@ class TrendsCaptionRenderedTest(unittest.TestCase):
         with mock.patch.object(comun, "_today_local", return_value=HOY):
             page = self.client.get("/trends").text
         chunk = self._chunk(page, "hrv_last_night")
-        self.assertIn("Lowest on the first night; back in your range by day +1 after.", chunk)
+        self.assertIn("Lowest on the first night; back in your range by day +1 after a night block.", chunk)
 
     def test_no_caption_on_a_metric_outside_the_model(self):
         with mock.patch.object(comun, "_today_local", return_value=HOY):

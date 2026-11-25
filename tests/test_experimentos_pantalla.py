@@ -133,6 +133,28 @@ class VerdictWordsTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("muy pocos días todavía", r.text)
 
+    def test_intraday_metric_label_resolves_not_a_raw_key(self):
+        """BODY-REVISION-I18N-FUGAS-1 finding 5: `heart_rate` and `stress` are intraday kinds
+        (body/experimentos.py's own _KIND_INTRADIA), not metric_def rows, so the card's own
+        t("metric." + k) call (body/rutas/experimentos.py _metric_line) had no label for either --
+        shown as the raw key `metric.heart_rate` on screen. Both languages, both kinds."""
+        conn = _reset_db(self)
+        db.crear_experimento(conn, 1, "Enraizamiento", ["heart_rate", "stress"],
+                             {"tipo": "intradia", "ancla": "despertar", "antes_min": None, "despues_min": 60},
+                             {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False})
+        r = _get("/goals")
+        self.assertNotIn("metric.heart_rate", r.text)
+        self.assertNotIn("metric.stress", r.text)
+        self.assertIn(T("es")("metric.heart_rate"), r.text)
+        self.assertIn(T("es")("metric.stress"), r.text)
+        db.set_language(conn, "en", 1)
+        conn.commit()
+        r = _get("/goals")
+        self.assertNotIn("metric.heart_rate", r.text)
+        self.assertNotIn("metric.stress", r.text)
+        self.assertIn(T("en")("metric.heart_rate"), r.text)
+        self.assertIn(T("en")("metric.stress"), r.text)
+
     def test_aun_no_words_still_valid_vocabulary_on_a_card(self):
         """'aun_no' is no longer produced by experimentos.veredicto() (body/experimentos.py's own
         module docstring), but the code stays valid vocabulary with its words on screen -- a card
