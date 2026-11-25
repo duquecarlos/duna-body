@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from tests._db import open_conn
 
-from body import config, db, identity, web
+from body import config, db, identity, profile, readiness, web
 from body.agente import herramientas
 from body.rutas import comun
 
@@ -240,6 +240,29 @@ class MinutesByUnitTest(unittest.TestCase):
         chunk = self._chunk(page, "vehicle_minutes")
         if "delta good" in chunk or "delta bad" in chunk:
             self.assertRegex(chunk, r"[↑↓] \d+ min ")
+
+
+class ReadinessChartReachesTheSameEndAsOtherSeriesTest(unittest.TestCase):
+    """BODY-REVISION-SYNC-READINESS-1 ruling 4: once readiness is stored for the stored history
+    (ruling 1's own fix), its own Tendencias monthly line reaches the SAME last month as any
+    other series -- never ending months earlier, the gap finding 11c named. Synthetic data only,
+    no real health figures."""
+
+    def test_readiness_last_month_matches_another_series_last_month(self):
+        conn = _conn(self)
+        db.init(conn)
+        start, n = "2026-08-01", 60
+        for key, base in (("hrv_last_night", 50.0), ("resting_hr", 55.0), ("stress_avg", 30.0),
+                           ("sleep_minutes", 450.0), ("body_battery_wake", 75.0)):
+            _seed_days(conn, 1, key, start, n, base)
+        conn.commit()
+        readiness.recompute_all(conn, 1)
+        conn.commit()
+        p_readiness = profile.metric_profile(conn, "readiness", person_id=1)
+        p_resting_hr = profile.metric_profile(conn, "resting_hr", person_id=1)
+        self.assertIsNotNone(p_readiness)
+        self.assertIsNotNone(p_resting_hr)
+        self.assertEqual(p_readiness.months[-1][0], p_resting_hr.months[-1][0])
 
 
 if __name__ == "__main__":

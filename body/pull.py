@@ -490,6 +490,24 @@ def _recalcular_sueno_fc_seguro(conn, person_id: int) -> None:
         print(f"sueno_fc failed: {errores.texto_seguro(e)}", flush=True)
 
 
+def _recalcular_readiness_seguro(conn, person_id: int) -> None:
+    """BODY-REVISION-SYNC-READINESS-1 ruling 1: the SAME recompute the local branch's own daily
+    loop calls (`readiness.recompute_all`), never a second implementation -- so every hosted path
+    that saves days also stores readiness for them, not only the local one. Readiness is derived
+    from this person's own stored metrics, so recomputing their WHOLE history on every pull is
+    idempotent (never wrong, only possibly redundant) -- the same reasoning that lets the nightly
+    backfill timer fill in the stored history gradually with no one-off command. A failure here is
+    never a Garmin failure and never stops the pull for this or the next person (same safe-wrapper
+    shape as `_recalcular_sueno_fc_seguro`): caught, printed as a counts-only line with the
+    exception TYPE, nothing else happens. Unlike the other two recalc sweeps, never silent-on-
+    success-only: recompute_all's own count is "every day with data," not "every new row," so a
+    no-op success would print a nonzero line on literally every call -- silent either way."""
+    try:
+        readiness.recompute_all(conn, person_id)
+    except Exception as e:
+        print(f"readiness failed: {errores.texto_seguro(e)}", flush=True)
+
+
 def _sincronizar_lugares_seguro(conn, person_id: int) -> None:
     """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 5: at most once per person per calendar day (skipped,
     silently, when `lugares_sync.intento_at` already names today -- never a second network
@@ -586,8 +604,9 @@ def _registrar_intento_persona(conn, person_id: int, ahora: datetime, exc: Excep
 
 def _pull_persona(conn, person_id: int, days: list[str]) -> dict:
     """One person's pull-and-postprocess: `_pull_one_person` (which itself handles the token --
-    read, refresh, re-encrypt), the error record/clear, and the three post-pull recalcs -- shared
-    by `pull_hosted`'s own per-person loop and the "connecting starts a pull now" path (ruling 4b),
+    read, refresh, re-encrypt), the error record/clear, and the four post-pull recalcs (BODY-
+    REVISION-SYNC-READINESS-1 ruling 1 adds readiness to the existing three) -- shared by
+    `pull_hosted`'s own per-person loop and the "connecting starts a pull now" path (ruling 4b),
     the same per-person path, never a copy. Returns {"estado": "sin_token"|"error"|"ok", "saved":
     int, "vacios": int, "fallos_parciales": dict[str, int]} -- "sin_token" when the person has no
     token to pull with (never counted as a failure, same as before this refactor); "saved" counts
@@ -612,6 +631,7 @@ def _pull_persona(conn, person_id: int, days: list[str]) -> dict:
     _recalcular_recuperacion_seguro(conn, person_id)
     _recalcular_turno_fc_seguro(conn, person_id)
     _recalcular_sueno_fc_seguro(conn, person_id)
+    _recalcular_readiness_seguro(conn, person_id)  # ruling 1: hosted now stores it too
     return {"estado": "ok", "saved": n, "vacios": vacios, "fallos_parciales": fallos_parciales}
 
 
@@ -654,13 +674,18 @@ def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: da
     exactly one day through `_pull_one_person` (the same fetch path, token re-encryption and watch-
     last-sync read the daily/connect pulls already use for one day), records the attempt
     (`garmin_cuenta.registrar_error`/`limpiar_error`/`_registrar_intento_persona`, the same shape
-    every other pull uses), and on success recomputes only `sueno_fc` (BODY-SYNC-VIVO-2's own
+    every other pull uses), and on success recomputes `sueno_fc` (BODY-SYNC-VIVO-2's own
     reasoning: the one post-pull derivation a live trigger could actually read right after this
-    call returns). Never raises -- a Garmin failure is recorded, not propagated. Returns (True,
-    days empty) on success, (False, days empty) on a Garmin failure -- BODY-GARMIN-DIAGNOSTICO-1
-    ruling 3: the empty count `_pull_one_person` already returns (or attaches to its own
-    exception as `.vacios`, the same contract every other caller here reads), carried out so the
-    --hoy sweep's own line can count it too."""
+    call returns) and, since BODY-REVISION-SYNC-READINESS-1 ruling 1, readiness too -- not for
+    Hoy/Día's own SCORE (both read it live, `readiness.compute`, never storage), but for the
+    STORED history their own "vs your average" baseline line leans on, and for Tendencias' own
+    readiness chart (ruling 4): this trigger saves a day same as any other pull path, so it stores
+    readiness for it same as any other. `recuperacion`/`turno_fc` still stay out, unchanged
+    (neither Día nor Hoy reaches either from this trigger). Never raises -- a Garmin failure is
+    recorded, not propagated. Returns (True, days empty) on success, (False, days empty) on a
+    Garmin failure -- BODY-GARMIN-DIAGNOSTICO-1 ruling 3: the empty count `_pull_one_person`
+    already returns (or attaches to its own exception as `.vacios`, the same contract every other
+    caller here reads), carried out so the --hoy sweep's own line can count it too."""
     dia = ahora_local.date().isoformat()
     try:
         resultado = _pull_one_person(conn, person_id, [dia])
@@ -671,6 +696,7 @@ def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: da
     garmin_cuenta.limpiar_error(conn, person_id)
     _registrar_intento_persona(conn, person_id, ahora_utc, None)
     _recalcular_sueno_fc_seguro(conn, person_id)
+    _recalcular_readiness_seguro(conn, person_id)
     _, vacios, _ = resultado
     return True, vacios
 
@@ -840,7 +866,10 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
     (`_cerrar_semanas_todas`) -- connected or not, pulled OK or failed today (BODY-SEGURIDAD-3-M).
     On the implicit "today" sweep (no explicit `fecha`), also fetches any intraday days an active
     intraday experiment still needs (`_pull_intradia_pendientes`,
-    BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1) -- zero extra calls for a person with none.
+    BODY-EXPERIMENTOS-INTRADIA-DIAS-FALTANTES-1) -- zero extra calls for a person with none. Each
+    person this run actually pulls also gets their readiness recomputed (`_pull_persona`'s own
+    ruling 1, BODY-REVISION-SYNC-READINESS-1) -- the SAME call the local branch's own daily loop
+    makes, never a second implementation.
     Returns (persons ok, persons failed, days stored -- BODY-GARMIN-DIA-VACIO-1 ruling 2: an
     empty/all-NULL day never counts here, so this return's own arity and meaning for "saved" stay
     exactly as before for every existing caller). Prints its own job line before returning
@@ -1012,7 +1041,11 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
     day this run partially failed, plus BODY-GARMIN-DIAGNOSTICO-1 ruling 2's own reloj suffix for
     the last person this run actually pulled) -- counts, class names and a timestamp only, never
     a health figure. A fetched-but-empty day also prints its own one-line shape (ruling 1), from
-    the shared `_backfill_one_person`."""
+    the shared `_backfill_one_person`.
+
+    BODY-REVISION-SYNC-READINESS-1 ruling 1: on a person this run actually fetched something for,
+    also recomputes that person's readiness across their WHOLE stored history (the nightly timer
+    is what fills the stored history in gradually, batch by batch, with no one-off command)."""
     ok = failed = saved = omitidos = vacios = 0
     desde_por_persona: dict[int, date] = {}
     fallos_parciales: dict[str, int] = {}
@@ -1056,6 +1089,9 @@ def pull_backfill_hosted(conn, *, hoy: date | None = None) -> tuple[int, int, in
         _recalcular_recuperacion_seguro(conn, person_id)
         _recalcular_turno_fc_seguro(conn, person_id)
         _recalcular_sueno_fc_seguro(conn, person_id)
+        _recalcular_readiness_seguro(conn, person_id)  # ruling 1: across this person's whole
+        # stored history, not just this run's own batch -- the nightly timer's own reach widens a
+        # little more each run, so the stored history fills in gradually with no one-off command.
         if oldest is not None:
             desde_por_persona[person_id] = date.fromisoformat(oldest)
     if omitidos:
