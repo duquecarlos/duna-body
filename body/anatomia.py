@@ -56,6 +56,40 @@ CATEGORIA_GRUPOS: dict[str, frozenset[str]] = {
 GRUPOS_ORDEN: list[str] = ["pecho", "hombros", "biceps", "abdomen", "dorsales", "espalda_alta",
                            "deltoides_post", "cuadriceps", "gluteos", "isquios"]
 
+# BODY-AVATAR-3D-REGIONES-1 ruling 1: the ONE canonical list of body regions -- the 12 glow-group
+# keys BRILLOS already carries coordinates for (anclajes.json), each named once with its kind and
+# side. Order is BRILLOS' own order, front then back, so a 3D view (or anything else reading this
+# list) gets a stable walk order for free. corazon and cerebro are organs, not muscles, and both
+# read as the front side (their only BRILLOS entry is under "frente").
+REGIONES: tuple[dict[str, str], ...] = (
+    {"clave": "pecho", "tipo": "musculo", "lado": "frente"},
+    {"clave": "hombros", "tipo": "musculo", "lado": "frente"},
+    {"clave": "biceps", "tipo": "musculo", "lado": "frente"},
+    {"clave": "cuadriceps", "tipo": "musculo", "lado": "frente"},
+    {"clave": "abdomen", "tipo": "musculo", "lado": "frente"},
+    {"clave": "corazon", "tipo": "organo", "lado": "frente"},
+    {"clave": "cerebro", "tipo": "organo", "lado": "frente"},
+    {"clave": "dorsales", "tipo": "musculo", "lado": "espalda"},
+    {"clave": "espalda_alta", "tipo": "musculo", "lado": "espalda"},
+    {"clave": "deltoides_post", "tipo": "musculo", "lado": "espalda"},
+    {"clave": "gluteos", "tipo": "musculo", "lado": "espalda"},
+    {"clave": "isquios", "tipo": "musculo", "lado": "espalda"},
+)
+
+# BODY-AVATAR-3D-REGIONES-1 ruling 2: BODY-AGUJETAS-1's own soreness keys (body/db.py's
+# ENTEROS_MEDIDA_PERSONAL/RANGOS_MEDIDA_PERSONAL, grepped, never retyped from a spec sentence) ->
+# REGIONES. A soreness reading has no per-view pose, so a key maps to every region it covers,
+# front and back alike.
+DE_AGUJETAS: dict[str, tuple[str, ...]] = {
+    "soreness_legs": ("cuadriceps", "isquios"),
+    "soreness_glutes": ("gluteos",),
+    "soreness_back": ("dorsales", "espalda_alta", "deltoides_post"),
+    "soreness_chest": ("pecho",),
+    "soreness_shoulders": ("hombros",),
+    "soreness_arms": ("biceps",),
+    "soreness_core": ("abdomen",),
+}
+
 # BODY-CUERPO-NITIDEZ-1: basenames with no 800/1440 responsive pair -- vias-aereas's source is a
 # 2048x2048 square, not a plain crop of the served frame, so it was never re-encoded alongside the
 # other 12. contexto() marks every other view "nitida" so the template emits srcset+sizes for it;
@@ -103,6 +137,26 @@ def _alt(t: T, pantalla: str, vista_id: str) -> str:
     return t("cuerpo.alt.turnos." + vista_id)
 
 
+def regiones_estado(grupos_lit: frozenset[str] = frozenset(),
+                     grupos_limitados: frozenset[str] = frozenset(),
+                     grupos_pendientes: frozenset[str] = frozenset()) -> dict[str, str]:
+    """BODY-AVATAR-3D-REGIONES-1 ruling 3 (the seam): REGIONES' own order, one state per region,
+    built from the SAME three sets contexto() filters per view -- never a separate read, so a 2D
+    view and a 3D view (or anything else) can never disagree. Only a region that has a state is a
+    key at all. Precedence limitada > entrenado > pendiente (an injury is what the person most
+    needs to see), never a list of states."""
+    estados: dict[str, str] = {}
+    for region in REGIONES:
+        clave = region["clave"]
+        if clave in grupos_limitados:
+            estados[clave] = "limitada"
+        elif clave in grupos_lit:
+            estados[clave] = "entrenado"
+        elif clave in grupos_pendientes:
+            estados[clave] = "pendiente"
+    return estados
+
+
 def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
              grupos_limitados: frozenset[str] = frozenset(),
              grupos_pendientes: frozenset[str] = frozenset()) -> list[dict]:
@@ -116,7 +170,12 @@ def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
     planned-but-not-yet-trained group, in its own `pendiente` list -- the dashed outline, drawn
     with the solid glow's own class plus a modifier, never the hatch's. `nitida`
     (BODY-CUERPO-NITIDEZ-1) says whether this view's image has the 800/1440 responsive pair -- the
-    template reads it to choose srcset+sizes or the single-file src, never a filename test."""
+    template reads it to choose srcset+sizes or the single-file src, never a filename test.
+    `regiones` (BODY-AVATAR-3D-REGIONES-1 ruling 3) is the WHOLE screen's own named-region state
+    map, the same dict on every view in this list -- never filtered by that view's own permitidos,
+    since a 3D view (unlike this 2D one) shows every region at once. No template reads it today;
+    the existing per-view glow/limitada/pendiente lists above stay exactly as they are."""
+    regiones = regiones_estado(grupos_lit, grupos_limitados, grupos_pendientes)
     out = []
     for v in VISTAS_POR_PANTALLA[pantalla]:
         imagen = v["imagen"]
@@ -128,7 +187,8 @@ def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
         pendiente = [elipse for g in (grupos_pendientes & permitidos) for elipse in disponibles.get(g, [])]
         out.append({"id": v["id"], "imagen": imagen, "glow": glow, "limitada": limitada,
                     "pendiente": pendiente, "nitida": imagen not in _SIN_SRCSET,
-                    "label": t("cuerpo.vista." + v["id"]), "alt": _alt(t, pantalla, v["id"])})
+                    "label": t("cuerpo.vista." + v["id"]), "alt": _alt(t, pantalla, v["id"]),
+                    "regiones": regiones})
     return out
 
 
