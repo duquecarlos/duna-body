@@ -35317,3 +35317,88 @@ feat/body-revision-i18n-fugas-1` → merge commit `8c266c9a7cee66eee71786d7b9488
 identity: the branch tip's own tree and the merge commit's own tree are BOTH
 `81d0c90d786af6a9699d3e0292dce5f18e5568af` — proven identical. Branch
 `feat/body-revision-i18n-fugas-1` deleted (`git branch -d`). Not deployed, not pushed.
+
+## BODY-AVATAR-3D-REGIONES-1
+
+Surface: the 3D avatar mock (dev-protocol `research/avatar-3d-mock/`, finished and published to
+Carlos overnight under the relayed go BODY-AVATAR-3D-GO-OVERNIGHT) needs ONE canonical list of body
+regions and a seam that hands every screen a named-region state map, so a 3D view and the existing
+2D view can never disagree. This slice is the data-only followup (BODY-AVATAR-3D-INV's own
+BODY-AVATAR-3D-REGIONES-1/BODY-AVATAR-3D-SEAM-1): no customer string, no pixel change.
+
+**Ruling 1 -- REGIONES.** `body/anatomia.py` gets `REGIONES`: an ordered tuple of 12 dicts
+(`clave`, `tipo` musculo/organo, `lado` frente/espalda), one per BRILLOS glow-group key
+(`anclajes.json`), BRILLOS order front then back. corazon and cerebro are `organo`/`frente`; every
+other region is `musculo`. Tested two ways: exactly BRILLOS' own 12 keys, each region's lado
+matches which BRILLOS pose dict actually carries it, and every region has at least one ellipse.
+
+**Ruling 2 -- every other vocabulary mapped in, both ways.** `CATEGORIA_GRUPOS` (training
+categoria -> regions) is unchanged, "as it is"; cardio/movilidad/otro still map to nothing, and the
+new test asserts that explicitly (`.get(categoria, frozenset()) == frozenset()`) rather than
+leaving those three untested by omission. New `DE_AGUJETAS`: BODY-AGUJETAS-1's seven soreness keys
+(grepped from `body/db.py`'s own `ENTEROS_MEDIDA_PERSONAL`/`RANGOS_MEDIDA_PERSONAL`, never retyped
+from the spec sentence -- they matched exactly, no STOP needed) mapped to regions: legs->(cuadriceps,
+isquios), glutes->(gluteos,), back->(dorsales, espalda_alta, deltoides_post), chest->(pecho,),
+shoulders->(hombros,), arms->(biceps,), core->(abdomen,). Both mappings tested exhaustive in both
+directions against their own source vocabulary, every mapped value checked against REGIONES, and
+an unmapped key in either dict raises `KeyError` on direct subscript (asserted, never `.get`'s
+silent empty).
+
+**Ruling 3 -- the seam.** New `anatomia.regiones_estado(grupos_lit, grupos_limitados,
+grupos_pendientes) -> dict[clave, estado]`: one state per region that has one, precedence
+`limitada` > `entrenado` > `pendiente`, built from the SAME three frozensets `contexto()` already
+filters per view -- no new read, ruling 4. `contexto()` now computes this once per call and adds it
+as a `"regiones"` key to every per-view dict it returns (the identical dict on every view, never
+filtered by that view's own `permitidos` -- unlike the existing `glow`/`limitada`/`pendiente`
+lists, which stay exactly as they were). No template reads `regiones` yet
+(`body/templates/_cuerpo_vista.html` only ever reads `nitida`/`glow`/`pendiente`/`limitada`/
+`label`/`imagen`/`alt`, confirmed by reading it), so nothing rendered changes and the three
+call sites (`body/rutas/hoy.py`, `turnos.py`, `tendencias.py`) needed no edit -- they stayed
+outside `touches` and were not touched.
+
+**Ruling 4 -- no new query.** `regiones_estado()` is pure Python over the frozensets its three
+callers already hold; no SQL added, no route-cost ceiling moved.
+
+Touches: `body/anatomia.py`, `tests/test_anatomia_regiones.py`. (`body/static/anatomia/anclajes.json`
+was in the dispatch's `touches` but needed no edit -- REGIONES reads BRILLOS as it already stands.)
+`tests/test_cuerpo_vista.py` likewise needed no edit; its existing assertions check specific keys,
+never the whole per-view dict, so the new `regiones` key did not break them (confirmed by running
+it in the full gate below).
+
+New `tests/test_anatomia_regiones.py` (31 tests): REGIONES' own shape and BRILLOS cross-check;
+CATEGORIA_GRUPOS/DE_AGUJETAS two-way exhaustiveness, including the explicit cardio/movilidad/otro
+empty-mapping assertions and the `KeyError`-on-unknown-key assertions; `regiones_estado()`'s
+precedence (all three two-way combinations plus the three-way collision); and
+`contexto()`'s own seam -- its `regiones` output equal to what a demo call's glow/limitada/pendiente
+ellipse lists imply, confirmed NOT filtered per view (the heart-only "corazon" view on Hoy still
+reports the leg regions even though its own `glow` stays empty for a leg category), and the
+existing glow counts on Músculos/Espalda unchanged.
+
+Committed on `feat/body-avatar-3d-regiones-1` as `b36d9ef87b4b47d64e003820be8c7644fc8c9f4b` before
+the whole gate (base `main` at `f86ca99b63ab5eb2eb2be5cd44041da74f67afa3`).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 26 foreground chunks
+(247 test modules total: 10 modules per chunk for most, 5 per chunk for the `test_garmin_*`/
+`test_host_*` heavy group). Per-chunk counts: 220, 194, 217, 294, 222, 156, 240, 180, 141, 167, 97,
+268, 366, 215, 236, 290, 265, 238, 388, 222, 156, 175, 226, 279, 200, 114 -- summing to **5766**.
+Reconciled against an independent `unittest.TestLoader().discover("tests", top_level_dir=".")`
+collect-only count on the same final tree, which also returned **5766** -- exact match. Every
+chunk OK; no failures, no errors (the stray `ResourceWarning`s from `test_mudanza` and the
+deliberate `RuntimeError` traceback from `test_sync_vivo`'s own mock are both pre-existing fixture
+output, not failures). One chunk (`test_guardia_parches`..`test_hogar_feed`, 268 tests) ran past
+the 600s foreground cap (917.343s) and was auto-backgrounded; its own output was read to
+completion rather than guessed before continuing.
+
+**Merge.** No customer-facing bytes changed (no template reads the new `regiones` key), no schema
+or migration, no cross-repo contract -- Merge Policy A's three conditions all pass, so the merge
+proceeded on green without waiting. `git switch main`; `git merge --no-ff
+feat/body-avatar-3d-regiones-1` → merge commit `a60a22d907a4b7b17d56016fa3948335b93a2c2b`. Tree
+identity: the branch tip's own tree and the merge commit's own tree are BOTH
+`0e4a0271210898b97bcfc464214440a4a9794464` — proven identical. Branch
+`feat/body-avatar-3d-regiones-1` deleted (`git branch -d`). Not deployed, not pushed.
+
+**Open followup, for the 3D view itself.** Per-muscle recovery time (how long a `limitada` or
+`entrenado` region takes to read as recovered) does not exist anywhere in this data model; REGIONES
+and `regiones_estado()` only say what state a region is in today, never how long it has been there
+or when it is expected to change. A 3D view wanting that will need a new followup slice, not a read
+of what this one built.
