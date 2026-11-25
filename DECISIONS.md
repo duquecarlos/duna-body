@@ -35699,3 +35699,86 @@ other file was touched.
 Merged as `ff0cfb17670bd6b720c900c560292ea3e32367a5`, base `main` at
 `6468ace40a6a3747d6a792dc0d5f6f8579e9e615`, tree `91da81723a4f188f25a69ff96a63cbee4e4425d9` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-AVATAR-3D-OCULTAR-1
+
+Carlos saw the live 3D view (BODY-AVATAR-3D-VISOR-1, merged `54d4837`, opt-in on Hoy) and rejected
+the stand-in figure. His words, typed in the Personal desk on 25 Nov 2026 and relayed verbatim:
+"what the fuck is this 3D avatar? It's a chain. It doesn't look anything like the 2D images." The
+desk relayed his order: hide the 2D|3D switch now; 3D comes back only with the real anatomy mesh,
+after its renders pass review next to the 2D illustrations. This slice hides it and keeps the
+viewer code -- the real mesh reuses it through `construirFigura`.
+
+**Ruling 1 -- one switch, in code, off.** `body/rutas/hoy.py` gains a module constant,
+`CUERPO3D_VISIBLE = False`, with a docstring line naming this slice and Carlos's rejection.
+`_cuerpo_hoy_ctx` now builds the `cuerpo3d` key only `if CUERPO3D_VISIBLE`, else `None`. Read
+`body/templates/_cuerpo_vista.html` end to end first: every 3D block (the switch at line 4-12, the
+canvas track at 42-55, the stand-in caption/aviso/three JSON blobs/visor.js tag at 66-82) sits
+under `{% if cuerpo.cuerpo3d %}` already, from VISOR-1's own ruling 3 -- so the gate at the context
+level is enough; the template needed no edit, confirmed by reading it (not guessed), and stayed
+outside `touches` on purpose.
+
+**Ruling 2 -- the stand-in can never come back by accident.** `figura-v0.json` (the stand-in) is
+only ever referenced inside that same gated block (`data-figura="{{ static_url('avatar/figura-
+v0.json') }}"` at line 46), so with `CUERPO3D_VISIBLE` False the figure is unreachable from Hoy.
+`CuerpoVisibleDefaultOffTest.test_stand_in_figure_stays_unreachable_while_hidden` asserts
+`figura-v0.json` never appears in Hoy's rendered HTML while the constant is False.
+
+**Ruling 3 -- a device that had chosen 3D sees 2D.** `body/templates/_cuerpo_vista.html:81`
+(`<script src="{{ static_url('avatar/visor.js') }}" defer></script>`) is the only place that tag
+is emitted, and it sits inside the same `{% if cuerpo.cuerpo3d %}` block -- so with the gate off,
+visor.js is never loaded, and `localStorage body.cuerpo3d` (the only thing that ever reads it) is
+never read either. Confirmed by reading the template; no JS was touched.
+
+**Ruling 4 -- keep everything else.** `avatar3d.js`, `visor.js`, `figura-v0.json`, the five
+matcap/fibre images, the i18n keys, `_cuerpo3d_ctx`, `anatomia.REGIONES` and `regiones` all stay
+untouched -- the real-mesh slice reuses them. `tests/test_avatar3d.py` keeps every test asserting
+the 3D markup (the switch render, the canvas data attributes, the JSON roundtrip, the honesty
+line) by patching `hoy.CUERPO3D_VISIBLE` to `True` with `unittest.mock.patch.object`, rather than
+deleting them. New `CuerpoVisibleDefaultOffTest` (3 tests) asserts the default is `False`, that
+Hoy's rendered page carries none of `cuerpo3d-seg`, `cuerpo3d-track`, `cuerpo3d-lienzo`,
+`avatar/visor.js`, `avatar/avatar3d.js`, `cuerpo3d-regiones`, or the stand-in sentence in either
+language, and that `figura-v0.json` stays unreachable.
+
+**Ruling 5 -- no exact-count regression.** `tests/test_cuerpo_vista.py`, `tests/test_hoy.py`,
+`tests/test_hoy_escritorio.py`, `tests/test_demo_hoy_fijo.py` and `tests/test_mock_r2_hoy.py` --
+all five named in this dispatch's own `touches` -- were read and grepped for `cuerpo3d`/`aria-
+pressed`/`cuerpo-vista-track` counts (none reference the 3D markup at all; the switch uses `aria-
+checked`, not `aria-pressed`, per VISOR-1's own ruling 3 regression fix #2), then run unchanged:
+all 133 of their tests stayed green. No exact-count test needed a number changed.
+
+Touches: `body/rutas/hoy.py`, `tests/test_avatar3d.py` (edited); `body/anatomia.py`,
+`body/templates/_cuerpo_vista.html`, `tests/test_cuerpo_vista.py`, `tests/test_hoy.py`,
+`tests/test_hoy_escritorio.py`, `tests/test_demo_hoy_fijo.py`, `tests/test_mock_r2_hoy.py` were all
+in this dispatch's own `touches` but needed no edit, each confirmed by reading and/or running it.
+
+Committed on `feat/body-avatar-3d-ocultar-1` as one commit, `babcd63`, before the whole gate; base
+`main` at `643eb9c42517ede7e13916f373344e632e85195f`.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in foreground chunks of
+10 modules (5 for the `test_garmin_*`/`test_host_*` group, split further to 2/2/1 modules where a
+single module ran past the 600s foreground cap -- `test_host_autoactualizar` alone took 914s,
+pre-existing and unrelated to this diff). 248 test modules total. Per-chunk counts: 220, 194, 179,
+313, 262, 125, 251, 200, 132, 238, 294, 202, 287, 278, 274, 309, 292, 229, 137, 186, 279, 287, 135,
+61, 70, 108+35+33, 136+70 -- summing to **5816**. Reconciled against an independent
+`unittest.TestLoader().discover("tests", top_level_dir=".").countTestCases()` on the same final
+tree, which also returned **5816** -- exact match. Every chunk OK; the printed lines about
+`NotSignedIn`/`AttributeError`/`GarminConnectConnectionError`/a `RuntimeError("boom")` raised by a
+mock side effect are expected fixture output from passing tests exercising error paths, not
+failures -- no real health figure, no real credential, anywhere in the output.
+
+**Merge.** The diff touches no schema/migration and no cross-repo contract. Customer-facing bytes
+do change (the switch and the stand-in line disappear from Hoy for everyone), listed in this
+slice's own report as `customer_bytes`; the approval reason explicitly covers this ("removes an
+opt-in view and is reversible"), so Merge Policy A's merge-on-green applies. `git switch main`;
+`git merge --no-ff feat/body-avatar-3d-ocultar-1`; branch deleted.
+
+**Open followups.** The real-mesh slice (once renders pass review next to the 2D illustrations)
+must flip three things together: `CUERPO3D_VISIBLE` back to `True` in `body/rutas/hoy.py`, the
+figure file `body/static/avatar/figura-v0.json` (replaced with the real anatomy mesh), and the
+stand-in sentence `cuerpo.aviso3d.figura_provisional` (es/en, `body/i18n/es.json` /
+`body/i18n/en.json` -- either removed or reworded once the figure is no longer provisional).
+
+Merged as `4eb39457f69579c673edb4b0bb3ac3d3774b049e`, base `main` at
+`643eb9c42517ede7e13916f373344e632e85195f`, tree `9728b1894ee9fb9206bf51b7cb0b54c0c15ced6e` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
