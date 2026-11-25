@@ -50,6 +50,11 @@ SUENO_RESP_KEYS = ("sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration
 # BODY-SUENO-FC-1: the sleep-window heart rate, out of the generic grid and into its own line
 # inside the sleep card, same reasoning SUENO_RESP_KEYS above already carries.
 SUENO_FC_KEYS = ("sleep_hr_avg", "sleep_hr_min")
+# BODY-AVATAR-3D-OCULTAR-1: Carlos, relayed verbatim from the Personal desk, rejected the 3D
+# viewer's stand-in figure ("what the fuck is this 3D avatar? It's a chain. It doesn't look
+# anything like the 2D images.") -- the switch is hidden again until the real anatomy mesh
+# replaces figura-v0.json and its renders pass review next to the 2D illustrations.
+CUERPO3D_VISIBLE = False
 # Each stage's fixed palette class (body/static/body.css), never a var(...) string in markup (BODY-ESTILOS-1).
 STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "c-night"),
           ("sleep_light_min", "metric.sleep_light_min", "c-night-light"),
@@ -758,7 +763,8 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
         caption_limitada = t("cuerpo.caption.en_recuperacion", zonas=_lista_natural(t, nombres_zonas))
     vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes)
     return {"vistas": vistas, "caption": caption, "caption_limitada": caption_limitada,
-            "recorte": "completo", "cuerpo3d": _cuerpo3d_ctx(t, vistas)}
+            "recorte": "completo",
+            "cuerpo3d": _cuerpo3d_ctx(t, vistas) if CUERPO3D_VISIBLE else None}
 
 
 def _cuerpo3d_ctx(t: T, vistas: list[dict]) -> dict:
