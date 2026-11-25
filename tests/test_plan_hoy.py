@@ -13,7 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 from fastapi.testclient import TestClient
 
 from body import config, db, goals, web
-from body.rutas import comun
+from body.rutas import comun, hoy
 
 client = TestClient(web.app, follow_redirects=False)
 
@@ -342,6 +342,46 @@ class DiaPorDelanteSenalesTest(unittest.TestCase):
         _activity(conn, "2026-11-05", "strength_training", "a0")
         page = _get().text
         self.assertNotIn("Vuelta tras", page)
+
+
+class PlanHoyDoneDropsOffRenderTest(unittest.TestCase):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 1, rendered end-to-end through GET / -- the same three
+    states tests/test_hoy.py's own PlanHoyDoneDropsOffTest proves on the helper directly."""
+
+    def test_done_and_past_its_time_is_gone_from_the_page(self):
+        conn = _reset_db(self)
+        conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status, ejercicios_json) VALUES "
+            "(1, ?, '15:30', 'Pecho', 'done', '[{\"ejercicio\":\"press banca\",\"series\":4}]')", (HOY.isoformat(),))
+        conn.commit()
+        with mock.patch.object(hoy, "_hhmm_ahora", return_value="16:00"):
+            page = _get().text
+        self.assertNotIn("Pecho", page)
+
+    def test_done_but_not_past_its_time_shows_checked_and_muted(self):
+        conn = _reset_db(self)
+        conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status, ejercicios_json) VALUES "
+            "(1, ?, '15:30', 'Pecho', 'done', '[{\"ejercicio\":\"press banca\",\"series\":4}]')", (HOY.isoformat(),))
+        conn.commit()
+        with mock.patch.object(hoy, "_hhmm_ahora", return_value="10:00"):
+            page = _get().text
+        self.assertIn("Pecho", page)
+        self.assertIn('class="block c-muted"', page)
+        self.assertIn("Hecho", page)
+
+    def test_not_done_and_past_its_time_is_marked_earlier_today(self):
+        conn = _reset_db(self)
+        conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status, ejercicios_json) VALUES "
+            "(1, ?, '15:30', 'Pecho', 'accepted', '[{\"ejercicio\":\"press banca\",\"series\":4}]')",
+            (HOY.isoformat(),))
+        conn.commit()
+        with mock.patch.object(hoy, "_hhmm_ahora", return_value="16:00"):
+            page = _get().text
+        self.assertIn("Pecho", page)
+        self.assertIn("Antes de hoy", page)
+        self.assertNotIn("Hecho", page)
 
 
 if __name__ == "__main__":

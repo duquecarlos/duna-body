@@ -102,6 +102,162 @@ class HoyPeriodoTest(unittest.TestCase):
         self.assertIn(_t("en", "today.periodo_enlace"), r.text)
 
 
+class PeriodoSigueCtxTest(unittest.TestCase):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 2: an open period's own "still going?" nudge -- Today
+    only, past the versioned threshold (PERIODO_SIGUE_MODELO's own umbral_dias, 21), re-asking
+    once the same threshold has passed again since the last "Still going" answer."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def test_open_period_younger_than_the_threshold_shows_no_prompt(self):
+        conn = self._reset_db("sigue_joven.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", PERSON_A)
+        db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(5)).isoformat(), None)
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "today.periodo_sigue.sigue_btn"), r.text)
+
+    def test_open_period_at_the_threshold_never_asked_shows_the_prompt(self):
+        conn = self._reset_db("sigue_umbral.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", PERSON_A)
+        pid = db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(21)).isoformat(), None)
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "today.periodo_sigue", kind=_t("es", "periodo.kind.molestia"), n="21"), r.text)
+        self.assertIn(_t("es", "today.periodo_sigue.sigue_btn"), r.text)
+        self.assertIn(_t("es", "today.periodo_sigue.termino_btn"), r.text)
+        self.assertIn(f'action="/periodo/{pid}/sigue"', r.text)
+
+    def test_closed_period_shows_no_prompt_even_if_very_old(self):
+        conn = self._reset_db("sigue_cerrado.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", PERSON_A)
+        db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(60)).isoformat(),
+                          (hoy - timedelta(30)).isoformat())
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "today.periodo_sigue.sigue_btn"), r.text)
+
+    def test_answered_recently_shows_no_prompt(self):
+        conn = self._reset_db("sigue_recien.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", PERSON_A)
+        pid = db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(40)).isoformat(), None)
+        db.marcar_periodo_sigue_preguntado(conn, PERSON_A, pid, (hoy - timedelta(5)).isoformat())
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "today.periodo_sigue.sigue_btn"), r.text)
+
+    def test_answered_long_ago_asks_again(self):
+        conn = self._reset_db("sigue_de_nuevo.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", PERSON_A)
+        pid = db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(60)).isoformat(), None)
+        db.marcar_periodo_sigue_preguntado(conn, PERSON_A, pid, (hoy - timedelta(22)).isoformat())
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("es", "today.periodo_sigue.sigue_btn"), r.text)
+
+    def test_never_shown_on_the_day_page(self):
+        conn = self._reset_db("sigue_dia.db")
+        hoy = date(2026, 6, 10)
+        db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(40)).isoformat(), None)
+        conn.commit()
+        r = self.client.get(f"/day/{hoy.isoformat()}")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn(_t("es", "today.periodo_sigue.sigue_btn"), r.text)
+
+    def test_renders_in_english(self):
+        conn = self._reset_db("sigue_en.db")
+        hoy = date(2026, 6, 10)
+        db.set_metric(conn, hoy.isoformat(), "resting_hr", 55.0, "garmin", PERSON_A)
+        db.crear_periodo(conn, PERSON_A, "lesion", (hoy - timedelta(21)).isoformat(), None)
+        db.set_language(conn, "en", PERSON_A)
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(_t("en", "today.periodo_sigue.sigue_btn"), r.text)
+        self.assertIn(_t("en", "today.periodo_sigue.termino_btn"), r.text)
+
+
+class PeriodoSigueRouteTest(unittest.TestCase):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 2: the "Still going" POST route -- records today, never
+    an end_day, Body never closes a period on its own."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def test_records_today_and_redirects_home(self):
+        conn = self._reset_db("sigue_post.db")
+        hoy = date(2026, 6, 10)
+        pid = db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(40)).isoformat(), None)
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            r = self.client.post(f"/periodo/{pid}/sigue")
+        self.assertEqual(r.status_code, 303)
+        self.assertEqual(r.headers["location"], "/")
+        row = conn.execute("SELECT sigue_preguntado_en FROM period WHERE id = ?", (pid,)).fetchone()
+        self.assertEqual(row["sigue_preguntado_en"], hoy.isoformat())
+
+    def test_never_sets_end_day(self):
+        conn = self._reset_db("sigue_post_sin_cierre.db")
+        hoy = date(2026, 6, 10)
+        pid = db.crear_periodo(conn, PERSON_A, "molestia", (hoy - timedelta(40)).isoformat(), None)
+        conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=hoy):
+            self.client.post(f"/periodo/{pid}/sigue")
+        row = conn.execute("SELECT end_day FROM period WHERE id = ?", (pid,)).fetchone()
+        self.assertIsNone(row["end_day"])
+
+    def test_another_persons_period_is_a_no_op_redirect(self):
+        conn = self._reset_db("sigue_post_ajeno.db")
+        conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Otra')")
+        conn.commit()
+        pid = db.crear_periodo(conn, 2, "molestia", "2026-05-01", None)
+        conn.commit()
+        r = self.client.post(f"/periodo/{pid}/sigue")
+        self.assertEqual(r.status_code, 303)
+        row = conn.execute("SELECT sigue_preguntado_en FROM period WHERE id = ?", (pid,)).fetchone()
+        self.assertIsNone(row["sigue_preguntado_en"])
+
+    def test_unknown_period_is_a_no_op_redirect(self):
+        self._reset_db("sigue_post_inexistente.db")
+        r = self.client.post("/periodo/999999/sigue")
+        self.assertEqual(r.status_code, 303)
+
+
 class DiaPeriodoTest(unittest.TestCase):
     client = TestClient(web.app, follow_redirects=False)
 

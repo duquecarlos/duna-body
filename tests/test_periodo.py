@@ -51,7 +51,8 @@ class FreshDbTest(unittest.TestCase):
 
     def test_period_table_has_the_contract_columns(self):
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(period)")}
-        expected = {"id", "person_id", "kind", "start_day", "end_day", "note", "created_at", "updated_at", "zonas"}
+        expected = {"id", "person_id", "kind", "start_day", "end_day", "note", "created_at", "updated_at", "zonas",
+                    "sigue_preguntado_en"}
         self.assertEqual(cols, expected)
 
     def test_end_day_must_not_be_before_start_day(self):
@@ -106,6 +107,35 @@ class MigrationOnAnExistingDbTest(unittest.TestCase):
         db.init(self.conn)
         row = self.conn.execute("SELECT kind FROM period WHERE id = ?", (pid,)).fetchone()
         self.assertEqual(row["kind"], "viaje")
+
+
+class SiguePreguntadoColumnMigrationTest(unittest.TestCase):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 3: a database built from the current SCHEMA with
+    period's own `sigue_preguntado_en` column dropped (purely additive, so dropping it alone
+    simulates main's current schema, pre-this-slice)."""
+
+    def setUp(self):
+        self.conn = open_conn(self, Path(tempfile.mkdtemp(dir=TMP)) / "vieja_sigue.db")
+        self.conn.executescript(db.SCHEMA)
+        self.conn.execute("ALTER TABLE period DROP COLUMN sigue_preguntado_en")
+        self.conn.execute("INSERT INTO period_kind (key, sort_order) VALUES ('malestar', 0)")
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (1, 'Me')")
+        self.conn.commit()
+
+    def test_migration_adds_the_column(self):
+        db.init(self.conn)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(period)")}
+        self.assertIn("sigue_preguntado_en", cols)
+
+    def test_a_row_from_before_the_migration_reads_as_null(self):
+        self.conn.execute(
+            "INSERT INTO period (person_id, kind, start_day, created_at, updated_at) "
+            "VALUES (1, 'malestar', '2026-11-01', '2026-11-01T00:00:00+00:00', '2026-11-01T00:00:00+00:00')"
+        )
+        self.conn.commit()
+        db.init(self.conn)
+        row = self.conn.execute("SELECT sigue_preguntado_en FROM period").fetchone()
+        self.assertIsNone(row["sigue_preguntado_en"])
 
 
 # ---- crear_periodo / actualizar_periodo / borrar_periodo --------------------------------------
@@ -227,6 +257,34 @@ class BorrarPeriodoTest(unittest.TestCase):
     def test_unknown_period_is_refused(self):
         with self.assertRaises(ValueError):
             db.borrar_periodo(self.conn, 1, 999999)
+
+
+class MarcarPeriodoSiguePreguntadoTest(unittest.TestCase):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 2: the one writer of period.sigue_preguntado_en -- never
+    touches kind/start_day/end_day/note/zonas."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        self.pid = db.crear_periodo(self.conn, 1, "molestia", DAY)
+
+    def test_sets_the_column(self):
+        db.marcar_periodo_sigue_preguntado(self.conn, 1, self.pid, "2026-11-20")
+        row = self.conn.execute(
+            "SELECT sigue_preguntado_en FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertEqual(row["sigue_preguntado_en"], "2026-11-20")
+
+    def test_never_touches_end_day(self):
+        db.marcar_periodo_sigue_preguntado(self.conn, 1, self.pid, "2026-11-20")
+        row = self.conn.execute("SELECT end_day FROM period WHERE id = ?", (self.pid,)).fetchone()
+        self.assertIsNone(row["end_day"])
+
+    def test_another_persons_period_is_refused(self):
+        with self.assertRaises(ValueError):
+            db.marcar_periodo_sigue_preguntado(self.conn, 2, self.pid, "2026-11-20")
+
+    def test_unknown_period_is_refused(self):
+        with self.assertRaises(ValueError):
+            db.marcar_periodo_sigue_preguntado(self.conn, 1, 999999, "2026-11-20")
 
 
 # ---- periodos / dias_marcados -------------------------------------------------------------------

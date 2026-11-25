@@ -116,6 +116,7 @@ class RouteSetTest(unittest.TestCase):
         ("/login/cuenta/start", ("GET",)),
         ("/logout", ("POST",)),
         ("/mcp", ("POST",)),  # BODY-MCP-HTTP-1
+        ("/periodo/{period_id}/sigue", ("POST",)),  # BODY-REVISION-DIA-PERIODO-1
         ("/privacidad", ("GET",)),
         ("/privacidad/borrar", ("POST",)),
         ("/privacidad/consentimiento", ("GET",)),

@@ -13,6 +13,18 @@
 {% if garmin_sync or reloj_vivo %}{% include "_reloj.html" %}{% endif %}
 {% if reloj_vivo and reloj_vivo.sincronizando %}<script src="{{ static_url('reloj-sync.js') }}" defer></script>{% endif %}
 {% if periodo %}<div class="aviso">{{ periodo.texto }} <a class="taplink" href="#asis-btn">{{ periodo.enlace }}</a></div>{% endif %}
+{% if periodo_sigue %}
+<div class="aviso">
+  {{ periodo_sigue.texto }}
+  <div class="row gap-8 justify-start flex-wrap mt-6">
+    <form method="post" action="/periodo/{{ periodo_sigue.period_id }}/sigue" class="m-0">
+      <input type="hidden" name="back" value="/">
+      <button type="submit" class="btn">{{ t('today.periodo_sigue.sigue_btn') }}</button>
+    </form>
+    <a class="btn" href="#asis-btn">{{ t('today.periodo_sigue.termino_btn') }}</a>
+  </div>
+</div>
+{% endif %}
 {% if mcp_pendientes %}
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_pendientes.conversacion_id }}#asis-btn">{{ t('today.mcp_propuestas') if mcp_pendientes.n == 1 else t('today.mcp_propuestas_many', n=mcp_pendientes.n) }}</a></div>
 {% endif %}
@@ -90,9 +102,9 @@
       {% endif %}
     </li>
     {% else %}
-    <li class="block">
+    <li class="block{% if item.hecho %} c-muted{% endif %}">
       {% if item.hora %}<div class="k">{{ item.hora }}</div>{% endif %}
-      <div>{{ item.titulo }}</div>
+      <div>{{ item.titulo }}{% if item.hecho %} <span class="chip off">✓ {{ t('today.dia.hecho') }}</span>{% elif item.antes_hoy %} <span class="chip off">{{ t('today.dia.antes_hoy') }}</span>{% endif %}</div>
       {% if item.linea %}<div class="k">{{ item.linea }}</div>{% endif %}
       {% if item.nota %}<div class="note mt-6 m-0">{{ item.nota }}</div>{% endif %}
     </li>

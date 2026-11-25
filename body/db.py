@@ -1034,6 +1034,12 @@ CREATE TABLE IF NOT EXISTS period (
     -- and a malestar/viaje period that never needs one). Validated in Python (_validar_zonas
     -- below), the same division of labour kind's own period_kind FK already draws.
     zonas      TEXT CHECK (zonas IS NULL OR json_valid(zonas)),
+    -- BODY-REVISION-DIA-PERIODO-1 ruling 2: the day Hoy's own "still going?" nudge was last
+    -- answered "Still going" -- NULL means never asked (or asked, then the kind/start_day/note/
+    -- zonas changed since, which never touches this column, so a correction never resets it).
+    -- Read against today's own date plus the versioned threshold (body/rutas/hoy.py's
+    -- PERIODO_SIGUE_MODELO) to decide whether the nudge is due again; never backfilled.
+    sigue_preguntado_en TEXT,
     CHECK (end_day IS NULL OR end_day >= start_day)
 );
 CREATE INDEX IF NOT EXISTS idx_period_person ON period(person_id);
@@ -1740,6 +1746,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     pecols = {r[1] for r in conn.execute("PRAGMA table_info(period)")}
     if pecols and "zonas" not in pecols:
         conn.execute("ALTER TABLE period ADD COLUMN zonas TEXT CHECK (zonas IS NULL OR json_valid(zonas))")
+    # BODY-REVISION-DIA-PERIODO-1 ruling 3: a plain nullable ADD COLUMN, like zonas above -- every
+    # existing period reads as sigue_preguntado_en NULL ("never asked"), no data step.
+    if pecols and "sigue_preguntado_en" not in pecols:
+        conn.execute("ALTER TABLE period ADD COLUMN sigue_preguntado_en TEXT")
     # BODY-PLAN-FASES-4 ruling 1: two additive columns on an old database -- every existing kind
     # (malestar/viaje/lesion) reads as excluye_del_rango=1 (today's exact behaviour, unchanged) and
     # lleva_zona=0 until the PERIOD_KINDS seed upsert below (in init()) sets lesion's own
@@ -4734,6 +4744,21 @@ def actualizar_periodo(conn: sqlite3.Connection, person_id: int, period_id: int,
     vals += [period_id, person_id]
     with conn:
         conn.execute(f"UPDATE period SET {', '.join(sets)} WHERE id = ? AND person_id = ?", vals)
+    invalidar_periodos_cache(conn, person_id)
+
+
+def marcar_periodo_sigue_preguntado(conn: sqlite3.Connection, person_id: int, period_id: int, day: str) -> None:
+    """BODY-REVISION-DIA-PERIODO-1 ruling 2: records the day Hoy's own "still going?" nudge was
+    last answered "Still going" -- the ONLY writer of this column; never touches kind, start_day,
+    end_day, note or zonas, and never closes the period itself (Body never sets an end date on its
+    own). Refuses a period_id that is not this person's own, the same ownership check
+    actualizar_periodo uses."""
+    propio = conn.execute("SELECT 1 FROM period WHERE id = ? AND person_id = ?", (period_id, person_id)).fetchone()
+    if propio is None:
+        raise ValueError("period_id: not this person's own period")
+    with conn:
+        conn.execute("UPDATE period SET sigue_preguntado_en = ? WHERE id = ? AND person_id = ?",
+                     (day, period_id, person_id))
     invalidar_periodos_cache(conn, person_id)
 
 

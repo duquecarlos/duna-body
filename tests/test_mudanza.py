@@ -771,6 +771,24 @@ class PeriodZonasMudanzaTest(MudanzaTestCase):
         self.assertEqual(json.loads(row["zonas"]), ["hombro"])
 
 
+class PeriodSiguePreguntadoMudanzaMudanzaTest(MudanzaTestCase):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 3: period.sigue_preguntado_en survives a move too, the
+    SAME way zonas does above (match_cols=None copies a row's own columns -- purely additive)."""
+
+    def test_sigue_preguntado_en_survives_a_move(self):
+        source = self._new_source()
+        pid = db.crear_periodo(source, db.DEFAULT_PERSON_ID, "molestia", "2026-09-01", None)
+        db.marcar_periodo_sigue_preguntado(source, db.DEFAULT_PERSON_ID, pid, "2026-10-15")
+        source.close()
+
+        _, ok = mudanza.importar(self.source_path, CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+
+        dest = db.connect()
+        row = dest.execute("SELECT sigue_preguntado_en FROM period").fetchone()
+        self.assertEqual(row["sigue_preguntado_en"], "2026-10-15")
+
+
 class EscrituraExternaMudanzaTest(MudanzaTestCase):
     """BODY-HOGAR-REGISTRAR-IDEMPOTENTE-1 ruling 3: an idempotency-key row moves with the person,
     matched by its own natural key (person_id, origen, ref) -- its propuesta_id remapped to the
