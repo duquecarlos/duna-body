@@ -35210,3 +35210,110 @@ migration, no cross-repo contract. `git checkout main`; `git merge --no-ff feat/
 -> merge commit `3e1bc67106996dbb70615b63630e8de75359135d`. Tree identity: the branch tip's own tree and the
 merge commit's own tree are BOTH `fe348fad1f18dfdfb08030e9dd3b834315530121` — proven identical. Branch
 `feat/body-revision-sync-readiness-1` deleted (`git branch -d`). Not deployed, not pushed.
+
+## BODY-REVISION-I18N-FUGAS-1
+
+BODY-REVISION-1-INV findings 5, 6 and 12 (worker log
+`logs/worker-body-revision-1-inv-body-app-20261124T185438.json`, OBSERVED on `main` at
+`50bbd0c7806fc3ca10dbc1947944c0ac3a354cac`).
+
+**Finding 5 — Goals showed raw keys `metric.heart_rate` / `metric.stress`.**
+`body/rutas/experimentos.py` `_metric_line()` builds `t("metric." + metric_key)` for an intraday
+experiment's own metrics (`experimentos._KIND_INTRADIA = {"heart_rate": ..., "stress": ...}`), but
+neither `heart_rate` nor `stress` is a `db.METRIC_DEFS` row (they are `db.METRICAS_INTRADIA` /
+raw_payload kinds, never a `set_metric` column), so neither language had a label and the card showed
+the raw key on screen. Added `metric.heart_rate` / `metric.stress` to both `body/i18n/es.json`
+("Pulso" / "Estrés") and `body/i18n/en.json` ("Heart rate" / "Stress") — the app's own existing
+vocabulary (`metric.resting_hr` = "Pulso en reposo"/"Resting heart rate"), never a source name or a
+raw key. Screen/element: Goals' Experimentos section card, an intraday experiment's metric line.
+
+**Ruling 1 — strengthened, not narrowed.** `tests/test_i18n_paridad.py`'s own `_METRIC_KEYS` (the
+`"metric.+"` dynamic-prefix family) is now `sorted({d[0] for d in db.METRIC_DEFS} | set(experimentos._KIND_INTRADIA))`
+— the union, read from both sources, not retyped — so a future intraday kind with no label fails
+`test_dynamic_prefixes_resolve_in_es` instead of shipping silently. New regression test
+`tests/test_experimentos_pantalla.py::VerdictWordsTest::test_intraday_metric_label_resolves_not_a_raw_key`
+creates a real intraday experiment on both kinds, hits `/goals` in es and en, and asserts the raw key
+is absent and the real label is present in both languages — the exact repro the existing
+`test_pocos_dias_for_a_fresh_intraday_window` test already built without checking the label.
+
+**Finding 6 — Spanish in the English UI.**
+- Settings: `settings.turnos.desc` (en) said "Body shows Turnos" — fixed to "Body shows Shifts", the
+  product's own English screen name (`nav.shifts` = "Shifts"). Spanish (`es.json`) was already
+  correct ("Body te muestra Turnos") and is untouched. Screen/element: Settings, the shifts-opt-in
+  description line.
+- The Day shift slot's "(T)"-style letter: traced to `body/rutas/hoy.py` `_dia_por_delante_ctx()`
+  (actually the `shifts` list built a few lines above it, around `hoy.py:1532-1540`), which reads
+  `s["code"]` straight off the `shift` row. That column is written only by `body/shift_import.py`
+  (`INSERT INTO shift (..., code, ...) VALUES (..., it["code"], ...)`, lines 215-217 and 322-324) from
+  the person's own imported shift-schedule email — **it is data, not a built or translated string**.
+  The render already shows it beside the translated kind label (`f"{label}{' (' + s['code'] + ')' if
+  s['code'] else ''} ..."`), never instead of it, and never shown when the import carries no code.
+  Ruling 2's "data stays beside the name" was already satisfied; this needed no code change, only
+  this record of where the letter comes from.
+
+**Finding 12 — "After what?"** Trends' pattern notes named an offset ("on day +1 after" / "el día +1
+después") without saying after what. `body/rutas/tendencias.py` `_frase_patron_texto()` reads
+`trends.patron.cuando.<offset>` and `trends.patron.vuelta.<offset>` as plain i18n keys — no code
+change needed, only the text. Reworded all four `post_N` variants of each family in both languages
+(the `antes`/`noche_1`/`noche_ultima` keys already name their own anchor and were left alone, per the
+ruling's "every post_N and vuelta.post_N variant"):
+- `trends.patron.cuando.post_1..4` (en): "on day +1 after" → "on day +1 after a night block" (and
+  +2/+3/+4 alike).
+- `trends.patron.vuelta.post_1..4` (en): "by day +1 after" → "by day +1 after a night block" (and
+  +2/+3/+4 alike).
+- `trends.patron.cuando.post_1..4` (es): "el día +1 después" → "el día +1 después de un bloque de
+  noches" (and +2/+3/+4 alike).
+- `trends.patron.vuelta.post_1..4` (es): same wording as `cuando` above (the two families already
+  shared Spanish text).
+
+Screen/element: Trends, the Shifts-model pattern caption under a metric card with a `vuelve`/`no_vuelve`
+profile (`_frase_patron_texto`), and Shifts' own hero caption (`body/rutas/turnos.py`
+`_perfil_caption`, unmodified — reads the same keys). Updated the pinned sentences in
+`tests/test_tendencias_patron.py` (`FrasePatronTextoTest` and `TrendsCaptionRenderedTest`) to the new
+wording; `tests/test_turnos_perfil.py`'s own `assertIn("día +4 después", ...)` /
+`assertIn("day +4 after", ...)` substring checks still hold against the longer strings and needed no
+edit (outside `touches` for this slice; confirmed by running it in the full gate below).
+
+**Changed strings, es and en** (full old → new):
+- en `settings.turnos.desc`: "If you work shifts, Body shows Turnos: ..." → "If you work shifts, Body
+  shows Shifts: ..."
+- es/en `metric.heart_rate` (new): "Pulso" / "Heart rate"
+- es/en `metric.stress` (new): "Estrés" / "Stress"
+- en `trends.patron.cuando.post_1..4`: "on day +N after" → "on day +N after a night block"
+- en `trends.patron.vuelta.post_1..4`: "by day +N after" → "by day +N after a night block"
+- es `trends.patron.cuando.post_1..4`: "el día +N después" → "el día +N después de un bloque de
+  noches"
+- es `trends.patron.vuelta.post_1..4`: "el día +N después" → "el día +N después de un bloque de
+  noches"
+
+Touches stayed inside: `body/i18n/es.json`, `body/i18n/en.json`, `tests/test_i18n_paridad.py`,
+`tests/test_tendencias_patron.py`, `tests/test_experimentos_pantalla.py`, `DECISIONS.md`.
+`body/rutas/experimentos.py`, `body/experimentos.py`, `body/rutas/tendencias.py`,
+`body/rutas/ajustes.py`, `body/templates/settings.html`, `body/rutas/hoy.py`, `body/templates/day.html`,
+`tests/test_goals_web.py`, `tests/test_turnos_opcional_2..5.py`, `tests/test_hoy_turno.py`,
+`tests/test_turno_dia_plan.py`, `tests/test_rendimiento.py`, `tests/test_mock_r2_hoy.py` were all in
+the dispatch's `touches` but needed no edit — every fix in this slice was a translation-table or
+test-guard change, with no route, template or rendering code to touch.
+
+Committed on `feat/body-revision-i18n-fugas-1` as `5dc6d54812efd9c9a612ceb9e373addec9df3464` before the
+whole gate (base `main` at `68ed4df69bb209f0c93b674ac5e482dcc3e4648b`).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 21 foreground chunks (246
+test modules total: 18 chunks of ~10-20 non-heavy modules, 3 chunks of 4-5 modules each for the
+`test_garmin_*`/`test_host_*` heavy group). Per-chunk counts: 414, 513, 371, 429, 425, 216, 222, 283,
+288, 237, 306, 292, 229, 136, 186, 279, 286, 196, 70, 143, 214 — summing to **5735**. Reconciled
+against an independent `unittest.TestLoader().discover("tests", top_level_dir=".")` collect-only count
+on the same final tree, which also returned **5735** — exact match. Every chunk OK (one chunk carried
+1 expected failure, one carried 1 skip, both pre-existing and unrelated to this diff); no unexpected
+failures, no errors. Three chunks ran past the 600s foreground cap and were auto-backgrounded; each
+one's own output was read to completion rather than guessed before continuing.
+
+**Merge.** Customer-facing bytes changed (every string listed above, es and en) — Merge Policy A's
+customer-bytes condition is met, but this slice's own dispatch explicitly authorized the merge on
+green despite that ("YOU MAY MERGE... list every changed string ... so the orchestrator can measure
+them at 375 px before any deploy"), so the merge proceeded rather than stopping for approval. No
+schema or migration, no cross-repo contract. `git switch main`; `git merge --no-ff
+feat/body-revision-i18n-fugas-1` → merge commit `8c266c9a7cee66eee71786d7b94880e70ea3ce69`. Tree
+identity: the branch tip's own tree and the merge commit's own tree are BOTH
+`81d0c90d786af6a9699d3e0292dce5f18e5568af` — proven identical. Branch
+`feat/body-revision-i18n-fugas-1` deleted (`git branch -d`). Not deployed, not pushed.
