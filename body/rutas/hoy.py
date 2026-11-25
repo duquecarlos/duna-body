@@ -144,6 +144,15 @@ def _debe_lanzar_pull_hoy(conn, person_id: int) -> bool:
     return garmin_cuenta.puede_intentar(conn, person_id, datetime.now(timezone.utc), pull.ESPACIO_MIN_HOY)
 
 
+def _hhmm_ahora(person) -> str:
+    """BODY-REVISION-DIA-PERIODO-1: the current local clock as HH:MM, in the person's own
+    timezone -- `_plan_hoy_item`'s own "has this planned time already passed" check. A one-line
+    seam this module owns, so a test patches `hoy._hhmm_ahora` directly rather than mocking
+    `datetime.now` itself (CLAUDE.md: tests patch the module that owns a name)."""
+    tz = ZoneInfo(person.get("timezone") or "America/Bogota")
+    return datetime.now(tz).strftime("%H:%M")
+
+
 def _synced(conn, person) -> str | None:
     """Body's own last successful pull, today's own bare HH:MM or None -- the partial-day tiles'
     own "as of HH:MM" caption (`today.tile.hasta`) reads this unchanged; the score hero's own
@@ -250,6 +259,38 @@ def _periodo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict | No
     clave = "today.periodo" if db.kind_excluye_del_rango(p["kind"]) else "today.periodo_incluido"
     return {"texto": t(clave, kind=t("periodo.kind." + p["kind"]), fecha=fecha),
             "enlace": t("today.periodo_enlace")}
+
+
+# BODY-REVISION-DIA-PERIODO-1 ruling 2: an open period's own "still going?" nudge -- a versioned
+# threshold (the same "MODELO" shape noche_inusual.py/registro_cobertura.py already use), so a
+# later slice can retune it without a silent behaviour change.
+PERIODO_SIGUE_VERSION = "periodo-sigue-v1"
+PERIODO_SIGUE_MODELO = {"version": PERIODO_SIGUE_VERSION, "umbral_dias": 21}
+
+
+def _periodo_sigue_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
+    """BODY-REVISION-DIA-PERIODO-1 ruling 2: Hoy's own "Still going?" nudge for an OPEN period
+    (end_day IS NULL) that has run at least PERIODO_SIGUE_MODELO's own umbral_dias -- Today only,
+    never Día (finding 4's own "shown on Today and every Day page, with no prompt" is the gap this
+    fixes, without touching Día's own unrelated `_periodo_dia_ctx` line). Re-asks once the SAME
+    threshold has passed again since the last "Still going" answer (`sigue_preguntado_en`), never
+    every day. None covers both "no open period old enough yet" and "already answered recently
+    enough" -- the same "no line" rule every other Hoy card here follows. Reuses `db.periodos`'s
+    own per-connection cache (the same read `_periodo_hoy_ctx` above already pays for), so this
+    costs no extra statement."""
+    hoy_iso = today_local.isoformat()
+    abiertos = [p for p in db.periodos(conn, person_id, hoy_iso, hoy_iso) if p["end_day"] is None]
+    if not abiertos:
+        return None
+    p = abiertos[-1]
+    dias = (today_local - date.fromisoformat(p["start_day"])).days
+    umbral = PERIODO_SIGUE_MODELO["umbral_dias"]
+    if dias < umbral:
+        return None
+    desde = p["sigue_preguntado_en"]
+    if desde is not None and (today_local - date.fromisoformat(desde)).days < umbral:
+        return None
+    return {"period_id": p["id"], "texto": t("today.periodo_sigue", kind=t("periodo.kind." + p["kind"]), n=dias)}
 
 
 def _mcp_pendientes_ctx(conn, person_id: int) -> dict | None:
@@ -406,18 +447,31 @@ def _reentrada_o_tras_carga_txt(t: T, senales: dict) -> str | None:
     return None
 
 
-def _plan_hoy_item(t: T, conn, person_id: int, today_local: date) -> dict | None:
+def _plan_hoy_item(t: T, conn, person_id: int, today_local: date, ahora_hhmm: str = "00:00") -> dict | None:
     """BODY-HOY-DIA-POR-DELANTE-1 (ruling 2): today's own planned session as one "day ahead" row --
     an honest exercise count, never an invented duration the plan row does not carry. None with no
-    session planned for today."""
+    session planned for today.
+
+    BODY-REVISION-DIA-PERIODO-1 ruling 1 ("done drops off"): a row marked 'done' whose own time has
+    already passed drops off entirely (None) -- the person already confirmed it and the day has
+    moved on. A row marked 'done' whose time has NOT passed yet (or carries no time at all) stays,
+    with `hecho` set, so the template can show it checked and muted. A row NOT done whose time has
+    passed stays too, with `antes_hoy` set ("earlier today") -- it is still owed, never silently
+    dropped. `ahora_hhmm` defaults to "00:00" (nothing has passed yet) so every direct caller that
+    does not pass its own clock reading keeps today's exact pre-this-slice behaviour."""
     row = _plan_hoy_row(conn, person_id, today_local)
     if row is None:
+        return None
+    hecho = row["status"] == "done"
+    pasada = row["time"] is not None and row["time"] <= ahora_hhmm
+    if hecho and pasada:
         return None
     ejercicios = json.loads(row["ejercicios_json"])
     senales = reentrada.senales(conn, person_id, today_local)
     return {"tipo": "sesion", "hora": row["time"], "titulo": row["title"],
             "linea": t("today.dia.sesion_n", n=len(ejercicios)),
-            "nota": _reentrada_o_tras_carga_txt(t, senales)}
+            "nota": _reentrada_o_tras_carga_txt(t, senales),
+            "hecho": hecho, "antes_hoy": pasada and not hecho}
 
 
 def _actividades_hoy(conn, person_id: int, today_local: date) -> list[dict]:
@@ -434,7 +488,8 @@ def _actividades_hoy(conn, person_id: int, today_local: date) -> list[dict]:
              "duration_s": r["duration_s"]} for r in rows]
 
 
-def _dia_por_delante_ctx(t: T, conn, person_id: int, today_local: date, turno_hoy: dict | None) -> list[dict]:
+def _dia_por_delante_ctx(t: T, conn, person_id: int, today_local: date, turno_hoy: dict | None,
+                          ahora_hhmm: str = "00:00") -> list[dict]:
     """BODY-HOY-DIA-POR-DELANTE-1 (rulings 1, 2): one time-ordered list for today, merging today's
     shift, today's planned session, today's logged activities, and today's due habits/experiments
     -- each row carries its own time when a source gives one; an item with no time keeps the
@@ -442,6 +497,10 @@ def _dia_por_delante_ctx(t: T, conn, person_id: int, today_local: date, turno_ho
     timed row (never invents a time or a duration no source gives -- DESIGN rule 6). Never the
     autonomous-sounding copy the mock's own "Body moved Lower B to Saturday" implies (DESIGN rule
     14; BODY-MOCK-R2-CENSO-1-INV conflict #3) -- Body proposes, the person confirms; this is a read.
+
+    `ahora_hhmm`: the day's own planned-session row only (`_plan_hoy_item`'s "done drops off" check,
+    BODY-REVISION-DIA-PERIODO-1 ruling 1) -- defaults to "00:00" for a direct caller with no clock
+    of its own, same reasoning as `_plan_hoy_item`'s own default.
     """
     items: list[dict] = []
 
@@ -456,7 +515,7 @@ def _dia_por_delante_ctx(t: T, conn, person_id: int, today_local: date, turno_ho
             items.append({"tipo": "turno", "hora": None,
                           "titulo": t("shift.kind.title." + turno_hoy["kind"]), "linea": None})
 
-    sesion = _plan_hoy_item(t, conn, person_id, today_local)
+    sesion = _plan_hoy_item(t, conn, person_id, today_local, ahora_hhmm)
     if sesion is not None:
         items.append(sesion)
 
@@ -911,7 +970,8 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes, mcp_aplicado=mcp_aplicado,
                    hogar_aplicado=hogar_aplicado,
-                   dia_por_delante=_dia_por_delante_ctx(t, conn, person_id, today_local, turno_de_hoy["hoy"]),
+                   dia_por_delante=_dia_por_delante_ctx(t, conn, person_id, today_local, turno_de_hoy["hoy"],
+                                                         _hhmm_ahora(person)),
                    plan_semana=_plan_semana_ctx(t, conn, person_id, today_local),
                    semana_nocturna=_semana_nocturna_ctx(t, conn, person_id, today_local),
                    today_iso=today_local.isoformat(),
@@ -919,12 +979,34 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                    hogar_compartido=_hogar_compartido_ctx(conn, t, person_id, defs, today_local),
                    ventana=_ventana_ctx(t, conn, person, person_id, today_local),
                    periodo=_periodo_hoy_ctx(t, conn, person_id, today_local),
+                   periodo_sigue=_periodo_sigue_ctx(t, conn, person_id, today_local),
                    noche_inusual=_noche_inusual_hoy_ctx(t, conn, person_id, day, vals),
                    despertar=_despertar_hoy_ctx(t, conn, person_id, day, today_local, correcciones_hoy),
                    objetivos_nutriente=_objetivos_nutriente_ctx(t, conn, defs, person_id, day, es_hoy),
                    comida_compartida_pendientes=_comida_compartida_pendientes_ctx(t, conn, defs, person_id),
                    dolor_manana=_dolor_manana_hoy_ctx(t, conn, person_id, today_local),
                    escala_dolor=_ESCALA_DOLOR_MANANA)
+
+
+@router.post("/periodo/{period_id}/sigue")
+@comun._cierra_conexion_async
+async def periodo_sigue(period_id: int, request: Request, person_id: int = Depends(identity.current_person_id)):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 2: Hoy's own "Still going?" nudge, "Still going" answer --
+    records today as the last day it was asked, so the SAME threshold (PERIODO_SIGUE_MODELO) must
+    pass again before it re-asks. Never a close, never an end_day -- Body never sets an end date
+    itself; the other answer ("It ended") is a plain link to the EXISTING close flow (`#asis-btn`),
+    never a second route. A period_id not this person's own, or already closed, is a defensive
+    no-op redirect, the same shape `entreno_separar`/`entreno_unir` below already use for a stale
+    control."""
+    conn, person, _ = comun._ctx(person_id)
+    today_local = comun._today_local(person)
+    try:
+        db.marcar_periodo_sigue_preguntado(conn, person_id, period_id, today_local.isoformat())
+    except ValueError:
+        pass
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back") or "/")
+    return RedirectResponse(back, status_code=303)
 
 
 # readiness.Part.key -> the Tendencias metric it reads from (readiness.Part carries no metric key of its

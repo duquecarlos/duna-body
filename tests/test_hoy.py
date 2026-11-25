@@ -165,6 +165,59 @@ class DiaPorDelanteTest(unittest.TestCase):
             self.assertNotIn(prohibido, texto)
 
 
+class PlanHoyDoneDropsOffTest(unittest.TestCase):
+    """BODY-REVISION-DIA-PERIODO-1 ruling 1 ("done drops off"): a planned session marked 'done'
+    whose own time has passed drops off the day-ahead list entirely; one marked 'done' whose time
+    has not passed yet stays, checked (`hecho`); one NOT done whose time has passed stays too,
+    marked `antes_hoy` ("earlier today") -- never silently dropped."""
+
+    def _plan(self, conn, status: str, hora: str = "15:30"):
+        conn.execute(
+            "INSERT INTO plan (person_id, day, time, title, status, ejercicios_json) VALUES "
+            "(1, '2026-11-11', ?, 'Upper B', ?, '[{\"ejercicio\":\"press\",\"series\":3}]')",
+            (hora, status))
+        conn.commit()
+
+    def test_done_and_past_its_time_drops_off_entirely(self):
+        conn = _mkconn(self)
+        self._plan(conn, "done")
+        items = hoy._dia_por_delante_ctx(ES, conn, 1, date(2026, 11, 11), None, ahora_hhmm="16:00")
+        self.assertEqual(items, [])
+
+    def test_done_but_not_past_its_time_stays_checked(self):
+        conn = _mkconn(self)
+        self._plan(conn, "done")
+        items = hoy._dia_por_delante_ctx(ES, conn, 1, date(2026, 11, 11), None, ahora_hhmm="10:00")
+        self.assertEqual(len(items), 1)
+        self.assertTrue(items[0]["hecho"])
+        self.assertFalse(items[0]["antes_hoy"])
+
+    def test_not_done_and_past_its_time_stays_marked_earlier_today(self):
+        conn = _mkconn(self)
+        self._plan(conn, "accepted")
+        items = hoy._dia_por_delante_ctx(ES, conn, 1, date(2026, 11, 11), None, ahora_hhmm="16:00")
+        self.assertEqual(len(items), 1)
+        self.assertFalse(items[0]["hecho"])
+        self.assertTrue(items[0]["antes_hoy"])
+
+    def test_not_done_and_not_past_its_time_is_plain(self):
+        conn = _mkconn(self)
+        self._plan(conn, "accepted")
+        items = hoy._dia_por_delante_ctx(ES, conn, 1, date(2026, 11, 11), None, ahora_hhmm="10:00")
+        self.assertEqual(len(items), 1)
+        self.assertFalse(items[0]["hecho"])
+        self.assertFalse(items[0]["antes_hoy"])
+
+    def test_done_with_no_time_at_all_never_drops(self):
+        """A session with no clock time can never read as "past", so a 'done' one just stays
+        checked -- there is no honest way to say its time has passed when it never had one."""
+        conn = _mkconn(self)
+        self._plan(conn, "done", hora=None)
+        items = hoy._dia_por_delante_ctx(ES, conn, 1, date(2026, 11, 11), None, ahora_hhmm="23:59")
+        self.assertEqual(len(items), 1)
+        self.assertTrue(items[0]["hecho"])
+
+
 class SiguienteBloqueNocheTest(unittest.TestCase):
     """Ruling 6: the next night block starting within 7 days -- never one already under way."""
 
