@@ -36004,3 +36004,7 @@ approval authorises merging on green rather than stopping at AWAITING_APPROVAL. 
 **Open followups.** BODY-CUERPO-ESTADO-REGIONES-AMPLIAR-1 (widen region coverage), 
 BODY-CUERPO-ESTADO-OTRAS-CAPAS-1 (further model layers beyond state/objetivo), BODY-CUERPO-SPIN-HOY-1
 (draw `objetivo` as an outline on Hoy once the 3D view ships) -- none started here.
+
+Merged as `4a6c9de8695f495fc068976ea371cced666ab53b`, base `main` at
+`db95677f765b3711cc306f0341fa759f0083b69b`, tree `fbb046590c7aeda83128a0c3fe7118c028caca3b` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
