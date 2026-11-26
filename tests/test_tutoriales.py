@@ -43,6 +43,14 @@ class CatalogTranslationCoverageTest(unittest.TestCase):
             self.assertIn(key, self.es, f"task {t['id']!r} has no Spanish title key")
             self.assertIn(key, self.en, f"task {t['id']!r} has no English title key")
 
+    def test_every_task_has_an_answer_key_in_both_languages(self):
+        """BODY-REVISION-COPY-GAPS-1 finding 21: a one-line text answer for every task, in place
+        of the bare "video coming soon"."""
+        for t in self.catalogo["tareas"]:
+            key = "tutoriales.respuesta." + t["id"]
+            self.assertIn(key, self.es, f"task {t['id']!r} has no Spanish answer key")
+            self.assertIn(key, self.en, f"task {t['id']!r} has no English answer key")
+
 
 class CapitulosConTareasLanguageTest(unittest.TestCase):
     def test_no_t_keeps_the_catalog_titulo(self):

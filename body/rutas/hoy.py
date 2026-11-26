@@ -104,12 +104,17 @@ def _nivel_label(t: T, nivel: str | None) -> str | None:
 
 
 def _reading(t: T, r: readiness.Readiness) -> str:
+    """BODY-REVISION-COPY-GAPS-1 finding 22: names the weakest part AND the strongest one
+    (never a part with no data -- `r.parts` only ever holds a part that has a value, `r.missing`
+    the rest), with one plain, non-medical action tied to the weakest part
+    (`readiness.accion`)."""
     if not r.parts:
         return ""
     weakest = min(r.parts, key=lambda p: p.subscore)
     strongest = max(r.parts, key=lambda p: p.subscore)
-    out = t("today.all_normal") if weakest.subscore >= 60 else t("today.weakest", part=t("part." + weakest.key))
-    if strongest.subscore >= 80 and strongest is not weakest:
+    out = t("today.weakest", part=t("part." + weakest.key))
+    out += " " + t("today.accion." + readiness.accion(weakest.key))
+    if strongest is not weakest:
         out += " " + t("today.strongest", part=t("part." + strongest.key))
     return out
 
@@ -990,6 +995,7 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
                    turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes, mcp_aplicado=mcp_aplicado,
                    hogar_aplicado=hogar_aplicado,
+                   experimento_nudge=experimentos.nudge_ayer_ctx(conn, t, person_id, today_local),
                    dia_por_delante=_dia_por_delante_ctx(t, conn, person_id, today_local, turno_de_hoy["hoy"],
                                                          _hhmm_ahora(person)),
                    plan_semana=_plan_semana_ctx(t, conn, person_id, today_local),
@@ -1570,6 +1576,10 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
         cards.append({"key": k, "label": t("metric." + k), "value": comun._value(t, k, v), "raw": v,
                       "unit": comun._unit(t, df), "delta": delta, "cls": cls, "est": df["kind"] == "estimated",
                       "href": href})
+    # BODY-REVISION-COPY-GAPS-1 finding 18: a measure with no value today folds under its own
+    # closed "Not logged today (n)" disclosure -- every row stays, none is removed, only grouped.
+    cards_con_dato = [c for c in cards if c["raw"] is not None]
+    cards_sin_dato = [c for c in cards if c["raw"] is None]
     sueno_resp_linea = _sueno_resp_linea(t, vals, defs)
     sueno_fc_linea = _sueno_fc_linea(t, vals, defs)
     noche_inusual_ctx = _noche_inusual_dia_ctx(t, conn, person_id, key, vals)
@@ -1666,7 +1676,8 @@ def day_view(day: str, person_id: int = Depends(identity.current_person_id)):
     # session and one unlinked watch strength session -- never a guess.
     union_oferta = db.candidatos_union_entreno(conn, person_id, d.isoformat()) is not None
     vinculo_tarjetas = _propuestas_vinculo_dia_ctx(conn, t, person_id, d.isoformat())
-    return comun._render("day.html", t=t, tab="today", day=d.isoformat(), date_long=t.long_date(d), cards=cards,
+    return comun._render("day.html", t=t, tab="today", day=d.isoformat(), date_long=t.long_date(d),
+                   cards=cards_con_dato, cards_sin_dato=cards_sin_dato,
                    sleep=sleep, sueno_resp_linea=sueno_resp_linea, sueno_fc_linea=sueno_fc_linea,
                    despertar=despertar_ctx, noche_inusual=noche_inusual_ctx,
                    activities=acts, shifts=shifts, has_data=has_data, block_ctx=block_ctx,

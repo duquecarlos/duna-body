@@ -34,6 +34,33 @@
 {% if hogar_aplicado %}
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ hogar_aplicado.conversacion_id }}#asis-btn">{{ t('today.hogar_aplicado') if hogar_aplicado.n == 1 else t('today.hogar_aplicado_many', n=hogar_aplicado.n) }}</a></div>
 {% endif %}
+{% if experimento_nudge %}
+<div class="aviso">
+  {% if experimento_nudge.single %}
+  {{ experimento_nudge.texto }}
+  <div class="row gap-8 justify-start flex-wrap mt-6">
+    <form method="post" action="/experiments/{{ experimento_nudge.id }}/day" class="m-0">
+      <input type="hidden" name="day" value="{{ experimento_nudge.ayer_iso }}">
+      <input type="hidden" name="ocurrio" value="1">
+      <input type="hidden" name="back" value="/">
+      <button type="submit" class="btn">{{ t('today.experimento_nudge_marcar') }}</button>
+    </form>
+    <form method="post" action="/experiments/nudge/dismiss" class="m-0">
+      <input type="hidden" name="back" value="/">
+      <button type="submit" class="btn">{{ t('today.experimento_nudge_descartar') }}</button>
+    </form>
+  </div>
+  {% else %}
+  <a class="taplink" href="/goals">{{ experimento_nudge.texto }}</a>
+  <div class="row gap-8 justify-start flex-wrap mt-6">
+    <form method="post" action="/experiments/nudge/dismiss" class="m-0">
+      <input type="hidden" name="back" value="/">
+      <button type="submit" class="btn">{{ t('today.experimento_nudge_descartar') }}</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
 <div class="hoy-top">
 <div class="hoy-top-left">

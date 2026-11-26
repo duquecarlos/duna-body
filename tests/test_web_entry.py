@@ -86,6 +86,7 @@ class RouteSetTest(unittest.TestCase):
         ("/experiments/{experiment_id}", ("GET",)),
         ("/experiments/{experiment_id}/close", ("POST",)),
         ("/experiments/{experiment_id}/day", ("POST",)),
+        ("/experiments/nudge/dismiss", ("POST",)),  # BODY-REVISION-COPY-GAPS-1 finding 19
         ("/garmin", ("GET",)),
         ("/garmin/codigo", ("POST",)),
         ("/garmin/conectar", ("POST",)),

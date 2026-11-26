@@ -181,6 +181,54 @@ def dias_intradia_necesarios(conn, person_id: int, hoy: date) -> list[str]:
     return dias
 
 
+# BODY-REVISION-COPY-GAPS-1 finding 19: Today's own nudge for an active, non-habit experiment
+# whose YESTERDAY counted for its own day filter but was never marked -- reuses body/db.py's own
+# open-text `moment` table (the same convention body/noche_inusual.py's own DISMISS_KIND already
+# uses), never a new table. `ts_local` is the render day's OWN date (never the unmarked day), so a
+# dismissal silences the whole line for the rest of THAT day and reads fresh again tomorrow, once
+# "yesterday" itself has moved on.
+NUDGE_DISMISS_KIND = "experimento_nudge_oculto"
+
+
+def nudge_oculto(conn, person_id: int, today_iso: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM moment WHERE person_id = ? AND kind = ? AND ts_local = ?",
+        (person_id, NUDGE_DISMISS_KIND, today_iso),
+    ).fetchone() is not None
+
+
+def marcar_nudge_oculto(conn, person_id: int, today_iso: str) -> None:
+    """Idempotent in effect, the same shape body/noche_inusual.py's own marcar_vista keeps."""
+    if nudge_oculto(conn, person_id, today_iso):
+        return
+    db.crear_momento(conn, person_id, today_iso, NUDGE_DISMISS_KIND)
+
+
+def sin_marcar_ayer(conn, person_id: int, ayer: date) -> list[dict]:
+    """Active, non-habit experiments whose own day filter counts `ayer` and have no
+    `experimento_registro` row for it yet -- a habit-linked experiment is marked through its own
+    habit_check screen, never the `/experiments/{id}/day` route this nudge's one-tap button posts
+    to, so it never appears here."""
+    ayer_iso = ayer.isoformat()
+    out = []
+    for row in db.experimentos(conn, person_id, "activo"):
+        if row["habito_id"] is not None:
+            continue
+        if ayer_iso < row["fecha_inicio"] or (row["fecha_fin"] is not None and ayer_iso > row["fecha_fin"]):
+            continue
+        filtro_dias = json.loads(row["filtro_dias"])
+        if not dias_que_cuentan(conn, person_id, filtro_dias, ayer_iso, ayer_iso):
+            continue
+        reg = conn.execute(
+            "SELECT 1 FROM experimento_registro WHERE experimento_id = ? AND person_id = ? AND day = ?",
+            (row["id"], person_id, ayer_iso),
+        ).fetchone()
+        if reg is not None:
+            continue
+        out.append({"id": row["id"], "titulo": row["titulo"]})
+    return out
+
+
 def _ocurrio_por_dia(conn, person_id: int, experimento_id: int, habito_id: int | None,
                       dias: list[str]) -> dict[str, bool]:
     if not dias:

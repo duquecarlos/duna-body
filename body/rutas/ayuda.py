@@ -17,11 +17,14 @@ def healthz():
     return Response("ok", media_type="text/plain")
 
 
-def _tarea_ayuda_ctx(tarea: dict, hosted: bool) -> dict:
+def _tarea_ayuda_ctx(t, tarea: dict, hosted: bool) -> dict:
     objetivo = tutoriales.ir_a_pantalla(tarea)
     solo_en_linea = objetivo in tutoriales.SOLO_EN_LINEA and not hosted
     return {
         "id": tarea["id"], "titulo": tarea["titulo"], "video": tutoriales.video(tarea["id"]),
+        # BODY-REVISION-COPY-GAPS-1 finding 21: a one-line text answer on every card, in place of
+        # the bare "video coming soon" -- the video slot itself is untouched below.
+        "respuesta": tutoriales.respuesta_tarea(t, tarea["id"]),
         "pantalla_link": None if solo_en_linea else objetivo, "solo_en_linea": solo_en_linea,
         "con_asistente": tarea["agente"] == "si",
     }
@@ -36,7 +39,7 @@ def ayuda(person_id: int = Depends(identity.current_person_id)):
     capitulos = []
     recorrido = []
     for c in tutoriales.capitulos_con_tareas(t, incluir_turnos=turnos_on):
-        tareas = [_tarea_ayuda_ctx(tarea, hosted) for tarea in c["tareas"]]
+        tareas = [_tarea_ayuda_ctx(t, tarea, hosted) for tarea in c["tareas"]]
         capitulos.append({"id": c["id"], "titulo": c["titulo"], "tareas": tareas})
         recorrido.extend(tarea for tarea in tareas if tarea["video"])
     return comun._render("ayuda.html", t=t, tab="settings", capitulos=capitulos, recorrido=recorrido,

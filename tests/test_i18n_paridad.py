@@ -9,7 +9,7 @@ import string
 import unittest
 from unittest import mock
 
-from body import anatomia, db, experimentos, history, horizonte, noche_inusual, tutoriales
+from body import anatomia, db, experimentos, history, horizonte, noche_inusual, readiness, tutoriales
 from body import turnos_costo
 from body.agente import herramientas, propuestas
 from body.rutas import comun, metas, tendencias, turnos
@@ -183,6 +183,9 @@ _FIXED_DYNAMIC = {
     # here rather than showing half-translated on screen.
     "tutoriales.capitulo.+": [c["id"] for c in tutoriales.catalogo()["capitulos"]],
     "tutoriales.tarea.+": [t["id"] for t in tutoriales.catalogo()["tareas"]],
+    # body/tutoriales.py respuesta_tarea() (BODY-REVISION-COPY-GAPS-1 ruling 4): the same catalog
+    # task ids, so a new task with no answer line fails here rather than showing blank on screen.
+    "tutoriales.respuesta.+": [t["id"] for t in tutoriales.catalogo()["tareas"]],
     # body/rutas/asistente.py _medida_label()/_medida_target_txt() (BODY-PLAN-PROPUESTAS-1 ruling
     # 8, widened BODY-PLAN-PROPUESTAS-1-R ruling 1a): horizonte.py's own weekly-target vocabulary
     # and its three sentido/one-unit words (the "sesiones" unit's own bare count is gone --
@@ -199,6 +202,9 @@ _FIXED_DYNAMIC = {
     # body/agente/herramientas.py _leer_intradia(): the three honest reasons leer_intradia's own
     # empty-window explanation can name (BODY-DESPERTAR-REAL-2 ruling 1).
     "asistente.intradia.sin_datos.+": list(herramientas.MOTIVOS_INTRADIA_SIN_DATOS),
+    # body/rutas/hoy.py _reading() (BODY-REVISION-COPY-GAPS-1 ruling 5): the small, versioned
+    # action-per-part table in body/readiness.py -- every word it can hand back.
+    "today.accion.+": sorted(set(readiness._ACCION_PARTE.values())),
 }
 
 # body/web.py _finding_text(): key = f"history.find.{axis}_better_{better}", then t(key, ...) -- a

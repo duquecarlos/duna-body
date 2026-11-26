@@ -16,7 +16,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import db, garmin_cuenta, goals, turnos_costo
+from body import db, garmin_cuenta, goals, readiness, turnos_costo
 from body.baselines import Baseline
 from body.i18n import T
 from body.rutas import hoy
@@ -337,6 +337,41 @@ class SyncHeroCtxTest(unittest.TestCase):
         garmin_cuenta.registrar_reloj_sincronizo(self.conn, 1, ahora - timedelta(hours=2))
         self.conn.commit()
         self.assertEqual(hoy._synced(self.conn, self.person), sin_reloj)
+
+
+class ReadingTest(unittest.TestCase):
+    """BODY-REVISION-COPY-GAPS-1 finding 22: the readiness card's own sentence always names the
+    weakest part AND the strongest one, with one plain action tied to the weakest -- never a part
+    with no data. Pure dataclasses, no database."""
+
+    def _r(self, *parts, missing=None):
+        return readiness.Readiness("2026-11-20", 70, list(parts), missing or [])
+
+    def test_weakest_and_strongest_both_named_with_an_action(self):
+        weak = readiness.Part("sleep", 400.0, 480.0, 40.0, 0.25, "2026-11-20")
+        strong = readiness.Part("hrv", 60.0, 50.0, 90.0, 0.30, "2026-11-20")
+        out = hoy._reading(ES, self._r(weak, strong))
+        self.assertIn(ES("today.weakest", part=ES("part.sleep")), out)
+        self.assertIn(ES("today.accion.sueno"), out)
+        self.assertIn(ES("today.strongest", part=ES("part.hrv")), out)
+
+    def test_single_part_is_named_once_with_no_strongest_line(self):
+        only = readiness.Part("battery", 70.0, 65.0, 70.0, 0.20, "2026-11-20")
+        out = hoy._reading(ES, self._r(only))
+        self.assertIn(ES("today.weakest", part=ES("part.battery")), out)
+        self.assertIn(ES("today.accion.bateria"), out)
+        self.assertEqual(out.count(ES("part.battery")), 1)
+
+    def test_no_parts_is_empty(self):
+        self.assertEqual(hoy._reading(ES, self._r()), "")
+
+    def test_never_names_a_part_with_no_data(self):
+        weak = readiness.Part("sleep", 400.0, 480.0, 40.0, 0.25, "2026-11-20")
+        strong = readiness.Part("hrv", 60.0, 50.0, 90.0, 0.30, "2026-11-20")
+        out = hoy._reading(ES, self._r(weak, strong, missing=["battery", "resting_hr", "stress"]))
+        self.assertNotIn(ES("part.battery"), out)
+        self.assertNotIn(ES("part.resting_hr"), out)
+        self.assertNotIn(ES("part.stress"), out)
 
 
 if __name__ == "__main__":

@@ -166,8 +166,13 @@ client = TestClient(web.app, follow_redirects=False)
 # db.trabaja_turnos_si into its own render call (the nav's Shifts tab was silently dropping for a
 # person who works shifts). Measured 24 statements (22 before), still comfortably under 29 --
 # ceiling unchanged.
+# BODY-REVISION-COPY-GAPS-1 finding 19: /'s own ceiling, raised for the yesterday-unmarked
+# experiment nudge (body/rutas/experimentos.py's nudge_ayer_ctx) -- one unconditional dismissal
+# check plus one batched active-experiments read, never a per-experiment query on this file's own
+# fixture (its seeded experiment never qualifies as an unmarked-yesterday candidate). Measured 157
+# statements (131 before), ceil(157 * 1.3) = 205.
 _CEILINGS = {
-    "/": 155,
+    "/": 205,
     "/comida/productos": 29,
     "/comida/productos/agregar": 17,
     "/ajustes/asistente": 16,

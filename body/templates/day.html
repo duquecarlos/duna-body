@@ -87,10 +87,19 @@
   <ul class="list">{% for e in checkin.eventos %}<li>{% if e.hora %}<span class="note">{{ e.hora }}</span> {% endif %}<strong>{{ e.momento }}</strong>{% if e.valores %}<br><span class="note">{% for v in e.valores %}{{ v.etiqueta }}: {{ v.valor }}{% if not loop.last %} · {% endif %}{% endfor %}</span>{% endif %}{% if e.nota %}<br><span class="note">{{ e.nota }}</span>{% endif %}</li>{% endfor %}</ul>
 </div>
 {% endif %}
+{% macro card_item(c) %}{% if c.href %}<a class="card"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %} href="{{ c.href }}">{% else %}<div class="card{% if c.raw is none %} empty{% endif %}"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %}>{% endif %}<div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}{% if c.href %}</a>{% else %}</div>{% endif %}{% endmacro %}
 <h2>{{ t('day.all') }}</h2>
 <div class="grid2 grid3">
-{% for c in cards %}{% if c.href %}<a class="card"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %} href="{{ c.href }}">{% else %}<div class="card{% if c.raw is none %} empty{% endif %}"{% if c.key != 'sleep_minutes' %} id="{{ c.key }}"{% endif %}>{% endif %}<div class="k">{{ c.label }}</div><div class="fig">{% if c.est and c.raw is not none %}<span class="approx">≈</span>{% endif %}{{ c.value }}{% if c.unit and c.raw is not none %}<span class="u">{{ c.unit }}</span>{% endif %}</div>{% if c.delta %}<div class="delta {{ c.cls }}">{{ c.delta }}</div>{% endif %}{% if c.href %}</a>{% else %}</div>{% endif %}{% endfor %}
+{% for c in cards %}{{ card_item(c) }}{% endfor %}
 </div>
+{% if cards_sin_dato %}
+<details class="files mt-8">
+  <summary class="k">{{ t('day.sin_registro', n=cards_sin_dato|length) }}</summary>
+  <div class="grid2 grid3 mt-8">
+  {% for c in cards_sin_dato %}{{ card_item(c) }}{% endfor %}
+  </div>
+</details>
+{% endif %}
 {% if desplazamiento_fuente %}<p class="note mt-6">{{ desplazamiento_fuente }}</p>{% endif %}
 <h2>{{ t('day.activities') }}</h2>
 {% if activities %}<ul class="list">{% for a in activities %}<li><a class="block no-underline entreno-row" href="{{ a.href }}"><strong>{{ a.name }}</strong><br><span class="note">{{ a.detail }}</span>{% if a.recovery %}<br><span class="note">{{ a.recovery }}</span>{% endif %}{% if a.lesion %}<br><span class="note">{{ a.lesion }}</span>{% endif %}</a>{% if a.vinculado %}<br><span class="note">{{ t('day.entreno.unida') }}</span>
