@@ -70,10 +70,12 @@ SELF_MEASURED = ["flex_alcance_cm", "snoring_min", "body_weight_kg", "waist_cm"]
 
 # BODY-MEDIDA-CINTA-1 ruling 5: the eleven tape-measured circumferences, seeded every three weeks
 # (sparser than body_weight_kg/waist_cm's own weekly cadence -- a tape measurement is not a weekly
-# habit) by _seed_self_metrics below.
+# habit) by _seed_self_metrics below. Drawn from their own random.Random(_CINTA_SEED), the same
+# "nothing else in the demo shifts" device _ESFUERZO_SEED above uses.
 CINTA_KEYS = ["arm_relaxed_left_cm", "arm_relaxed_right_cm", "arm_flexed_left_cm", "arm_flexed_right_cm",
               "chest_cm", "hips_cm", "thigh_left_cm", "thigh_right_cm", "calf_left_cm", "calf_right_cm",
               "neck_cm"]
+_CINTA_SEED = 20261125
 
 # BODY-AGUJETAS-1: next-day muscle soreness, one key per muscle group (ORCH-CARLOS-DELEGATES-
 # TIER-1-1 ruling 1) -- seeded by _seed_soreness below, on its own cadence (the day after an
@@ -1131,7 +1133,12 @@ def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], perso
     and a waist reading about once a week each, the eleven tape-measured circumferences every third
     Monday (ruling 5: "every three weeks"), a snoring minutes-per-night value most nights -- all
     with source='self', via db.set_metric so they never ride along in save_day's single
-    'garmin'-sourced batch."""
+    'garmin'-sourced batch. The eleven circumferences draw from their own `random.Random(_CINTA_SEED)`
+    (the same device _seed_basket_historial uses for `_ESFUERZO_SEED`), never the shared `rng`, so
+    adding them never shifts a single draw of every OTHER figure this function and its callers
+    already seed deterministically (tests/test_demo.py's own DeterminismTest, and every route's
+    own statement-cost ceiling that depends on which day happens to land what)."""
+    rng_cinta = random.Random(_CINTA_SEED)
     rows, lunes_vistos = 0, 0
     for d in all_days:
         if d.weekday() == 0:
@@ -1143,7 +1150,7 @@ def _seed_self_metrics(conn, db, rng: random.Random, all_days: list[date], perso
             rows += 3
             if lunes_vistos % 3 == 0:
                 for key in CINTA_KEYS:
-                    db.set_metric(conn, d.isoformat(), key, _value(rng, key, 0.0), "self", person_id)
+                    db.set_metric(conn, d.isoformat(), key, _value(rng_cinta, key, 0.0), "self", person_id)
                     rows += 1
             lunes_vistos += 1
         if rng.random() < 0.85:
