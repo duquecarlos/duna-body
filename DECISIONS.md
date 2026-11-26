@@ -36008,3 +36008,100 @@ BODY-CUERPO-ESTADO-OTRAS-CAPAS-1 (further model layers beyond state/objetivo), B
 Merged as `4a6c9de8695f495fc068976ea371cced666ab53b`, base `main` at
 `db95677f765b3711cc306f0341fa759f0083b69b`, tree `fbb046590c7aeda83128a0c3fe7118c028caca3b` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-SUENO-DETECTOR-1
+
+A rule-based WITHIN-night wake/arousal detector, `body/sueno_arousal.py` -- Body reading his nights
+itself instead of only repeating Garmin's own sleep stages (BODY-SUENO-CLASIFICACION-PROPIA-INV's
+own surface, logs/worker-body-sueno-clasificacion-propia-inv-body-app-20261125T202637.json). A
+sibling of `body/despertar_real.py`, never a change to it: `estimar(conn, person_id, day) -> Noche
+| None` reads the whole night, `[sleep_session.start_local, sleep_session.end_local]` inclusive
+(ruling 2), while `despertar_real.estimar` covers the hours AFTER that same `end_local`
+(`despertar_real.py:294, 310-311`) -- the two windows never overlap, stated so in the module
+docstring with those file/line citations. `None` when `day` holds no `sleep_session` row for that
+person (ruling 1). Pure: no writes, no prints, no logging, no schema, no screen, no network --
+`VERSION = "sueno-arousal-v1"` and every threshold lives in `MODELO`.
+
+**Baselines are the night's own and the person's own (ruling 3).** `base_fc_noche` is the median
+heart rate of the night's own quietest quartile (sort ascending, median of the lowest quarter --
+`sueno_fc.py`'s own `percentil_bajo` convention, `sueno_fc.py:51/66-71`, applied to a quartile
+instead of a single rank); `base_hrv_noche` is the median of the night's own HRV samples; the
+movement threshold is the night's own median movement level, a relative "above the median" test,
+never an absolute code. Paired stress reuses `despertar_real`'s own nearest-timestamp pairing and
+rest baseline (`despertar_real.py:158-181`, `_baseline_estres`/`_valor_cercano`, called directly,
+`despertar_real.py` untouched) -- `_baseline_estres` still reads its own pre-wake 30-minute window
+(the night's OWN quiet baseline), while the full night's own `intradia_estres` samples (spanning
+both calendar days a crossing-midnight session touches) are fetched here for the actual per-minute
+pairing.
+
+**Four labels per minute (ruling 4):** `dormido`, `arousal`, `despierto`, `sin_dato`. A raw
+"moving" candidate is movement above the night's own median AND (heart rate >=
+`MODELO["margen_arousal_bpm"]` (6) over `base_fc_noche`, OR HRV >= `MODELO["margen_hrv_caida_pct"]`
+(20) % under `base_hrv_noche`, OR paired stress left its rest range). A raw "still-but-racing"
+candidate is movement AT OR UNDER the median with heart rate >=
+`MODELO["margen_despierto_quieto_bpm"]` (12) over base -- the quiet-wakefulness case movement alone
+and heart rate alone each miss. Runs are folded by duration: a moving run under
+`MODELO["min_duracion_arousal_min"]` (2) folds back to `dormido`; at least that but under
+`MODELO["min_duracion_despierto_min"]` (10) is `arousal`; at or above 10 is `despierto`; a still-
+racing run needs the full 10 minutes to read as `despierto` at all (shorter folds to `dormido` --
+ruling 4 names only the 10-minute case for the quiet signal, so nothing shorter is read as a wake
+of any kind from heart rate alone). Adjacent runs that fold to the same final label (one from each
+raw kind) are re-merged before `bouts` are cut, so a bout's own duration is never split by which
+signal raised it.
+
+**Cadence is measured, never assumed (ruling 5).** Each of movement/heart-rate/HRV is tiled on its
+own observed median spacing (`experimentos._espaciado_mediana_min`, reused, never restated) with
+`despertar_real._segmentos`'s own forward-fill convention (`despertar_real.py:212-247`) restated
+over raw values instead of a label; a gap wider than `MODELO["factor_hueco_espaciado"]` (3) times
+that spacing is `sin_dato` for that series. When a series' own spacing cannot be measured at all
+(fewer than two samples), no gap is ever judged for it -- Garmin documents no interval for the
+sleep arrays (unlike `despertar_real`'s known 2-minute `intradia_fc`), so nothing is assumed. No
+movement series at all (or none inside the window) -> the whole night is `sin_dato`,
+`motivo="sin_movimiento"`, never a guess.
+
+**`Noche`** (frozen dataclass): `version`, `minutos` (one `(iso, label)` per calendar minute of the
+window), `bouts` (ordered `(start, end, label)` for merged `arousal`/`despierto` runs, `end`
+exclusive), `totales_min` (minutes per label, all four keys always present), `cobertura` (share of
+the window not `sin_dato`), `espaciado_s` (observed median spacing in seconds, per series actually
+present and measurable -- `movement`/`heart_rate`/`hrv`/`stress`), `motivo`.
+
+**Tests, `tests/test_sueno_arousal.py`, 12 cases, invented nights only** (`tests/_isolate.py`
+imported first; fixtures follow `tests/test_leer_serie_minuto.py`'s `_guardar_sueno`/`_sesion`
+shape for the `raw_payload` kind='sleep' rows `db.sueno_minuto_a_minuto` reads): no `sleep_session`
+-> `None`; a calm night -> all `dormido`; a 1-minute stir folds back to `dormido`; a 3-minute
+movement-plus-heart-rate rise -> one `arousal` bout; a 15-minute rise -> `despierto`; a still but
+racing-heart 12 minutes -> `despierto`; an internal movement gap -> `sin_dato` and a lower
+`cobertura` (exact count checked: 11 of 31 minutes); no movement series -> all `sin_dato` with
+`motivo`; heart rate at a 2-minute and at a 5-minute spacing both tile the same rise correctly
+(`espaciado_s["heart_rate"]` == 120.0 / 300.0 respectively) and land the same `despierto` bout;
+two nights with different resting heart rates (50 vs 70 bpm) give the SAME per-minute labels for
+the same +8 bpm relative rise; a second person's elevated night never leaks into this person's own
+quiet one. Ran standalone (12/12 green) before the full-suite gate below.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, reconciled against an
+independent collect-only walk: **5878 tests** both ways -- exact match (251 modules, one more than
+BODY-CUERPO-ESTADO-MUSCULO-1's 250/5866, exactly the 12 new cases here). Run as 29 sequential
+foreground chunks (10 modules each, narrowed to 5 for `test_garmin_*` and 3 for `test_host_*`): the
+three named guards (`test_guardia_parches`, `test_host_import`, `test_deploy_host`, 87 tests) and
+`test_sueno_arousal` (12) first, then 28 chunks over the rest. Per-chunk counts: 220, 195, 192,
+313, 263, 123, 240, 180, 130, 70, 143, 231, 216, 169, 173, 264, 270, 265, 228, 340, 277, 215, 146,
+196, 280, 268, 168, 4 -- summing with the first 99 to **5878**, every chunk **OK**, zero failures,
+zero errors (pre-existing `expectedFailure`/`skipped` already folded into `OK`; two chunks ran long
+enough to be moved to the background by the harness and were each read to completion in the
+foreground before the next chunk started, never polled past completion). The printed `NotSignedIn`/
+`KeyError`/`RuntimeError`/`AttributeError` lines in several chunks are pre-existing simulated-
+failure test fixtures, not gate noise introduced here.
+
+**Merge.** The diff touches no schema or migration, no customer-facing bytes (no screen, no
+string), and no cross-repo contract -- merge policy A's three conditions all pass, so the merge
+proceeds on green per ORCH-CARLOS-DELEGATES-TIER-1-1's own authorisation ("a new pure read module
+with its own versioned parameters; no schema, no Tier 1 path, no customer bytes"). `git checkout
+main`; `git merge --no-ff feat/body-sueno-detector-1`; branch deleted.
+
+**Open followups.** BODY-SUENO-COMPARAR-1 (a counts-only command comparing this detector's own
+reading against Garmin's own sleep stages, printing the observed cadence as counts) -- not started
+here.
+
+Merged as `05ee0d0f49665a5898ca22115283c07cf45d46a0`, base `main` at
+`b8558f148ba0209811b4f9c4e2a69d94f44a3e02`, tree `e79109fa35662859f5f15194ee2f7c088b7ba846` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
