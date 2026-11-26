@@ -35782,3 +35782,105 @@ stand-in sentence `cuerpo.aviso3d.figura_provisional` (es/en, `body/i18n/es.json
 Merged as `4eb39457f69579c673edb4b0bb3ac3d3774b049e`, base `main` at
 `643eb9c42517ede7e13916f373344e632e85195f`, tree `9728b1894ee9fb9206bf51b7cb0b54c0c15ced6e` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-MEDIDA-CINTA-1
+
+Carlos decided how Body tracks his body, relayed by the Personal desk 25 Nov: a scale gives weight
+only, muscle is followed with a tape every 2-4 weeks, a professional test (a DEXA, about every 6
+months) sets the true reference later. Adds eleven self-measured, tape-measured circumferences
+beside `body_weight_kg`/`waist_cm` (BODY-MEDIDA-PESO-1): `arm_relaxed_left_cm`,
+`arm_relaxed_right_cm`, `arm_flexed_left_cm`, `arm_flexed_right_cm`, `chest_cm`, `hips_cm`,
+`thigh_left_cm`, `thigh_right_cm`, `calf_left_cm`, `calf_right_cm`, `neck_cm` -- `metric_def` rows
+only, no person's value, no table change.
+
+**Ruling 1 (`body/db.py`).** Eleven rows in `METRIC_DEFS`, unit `cm`, direction `neutral` (whether
+an arm or a waist should grow is the person's own goal, never assumed here), `kind='measured'`,
+`origen='self'` -- exactly `body_weight_kg`/`waist_cm`'s own shape. A plausible-range refusal (a
+typo guard, not a judgment) in `RANGOS_MEDIDA_PERSONAL` -- arms 15-70, chest/hips 50-200, thighs
+25-110, calves 18-70, neck 20-70 -- and one decimal in `DECIMALES_MEDIDA`, the same two tables
+`registrar_medida` already reads for `waist_cm`, so no `if`-chain anywhere names these eleven keys.
+
+**Ruling 2 (i18n, es/en).** A label per key (e.g. "Brazo izquierdo, relajado" / "Left arm,
+relaxed"), a `trends.q.<key>` question in `waist_cm`'s own shape, and a `trends.plain.<key>`
+how-to-measure line per site (mid upper arm; flexed = at the peak of the biceps; chest at the
+nipple line after a normal breath out; hips at the widest point of the buttocks; thigh midway
+between hip crease and kneecap; calf at its widest; neck just below the Adam's apple). The general
+guidance ("plus once, where the group is introduced": same spot, same time of day, tape snug on
+the skin but not pressing, every 2-4 weeks is enough) is appended to `trends.plain.waist_cm` itself
+-- waist_cm's card is the first one the new group renders, since `body/rutas/tendencias.py` (not in
+this slice's `touches:`) was the only place that could have carried a true group-level intro line.
+No medical claim anywhere in the wording.
+
+**Ruling 3 (`body/catalogo_tendencias.py`).** One new group, internal key `measures` (label
+"Medidas" / "Measurements"), holding `waist_cm` plus the eleven -- excluded from the generic
+`self` sweep (`[d[0] for d in db.METRIC_DEFS if d[5] == "self" and d[0] not in MEDIDAS_KEYS]`) so
+neither renders twice. `body_weight_kg` stays in the generic `self` sweep, per the ruling's own
+"weight stays where it is". The sparse-series floor (`SELF_MIN_MONTH_POINTS`,
+`body/rutas/tendencias.py`) is keyed by `origen == 'self'` generically, already covering the new
+keys with no further change -- confirmed by reading it rather than assumed.
+
+**Ruling 4 (entry).** Grepped every place `waist_cm` appears in `body/` and `tests/`:
+`registrar_medida`'s enum (`SELF_METRIC_KEYS`, `body/agente/herramientas.py`) is built from
+`db.METRIC_DEFS` generically, so the eleven keys are enterable with no special case. One place
+named `waist_cm` specifically and was deliberately left untouched:
+`body/registro_cobertura.py`'s own `cintura`/`peso` weekly-coverage streams, a dated-plan log model
+(the "Greece 2027 log" track, BODY-REGISTRO-COBERTURA-1) with its own fixed weekly cadence for
+exactly those two keys -- the eleven circumferences are on a 2-4 week cadence, not weekly, so they
+do not fit that model, and the module is outside this slice's `touches:` besides.
+
+**Ruling 5 (`body/demo.py`).** `CINTA_KEYS`, seeded every third Monday (`lunes_vistos % 3 == 0`,
+sparser than `body_weight_kg`/`waist_cm`'s own weekly cadence), invented demo ranges inside the
+plausible ranges. Drawn from their own `random.Random(_CINTA_SEED)`, the same device
+`_ESFUERZO_SEED` already uses, after a first pass (drawing from the shared `rng`) shifted every
+OTHER downstream random draw in the demo and pushed `/day/{day}`'s own statement-cost ceiling one
+over on an unrelated seeded day (`tests/test_rendimiento.py`) -- caught by the gate, fixed before
+merge, never shipped.
+
+**Also fixed before merge.** `trends.plain.calf_left_cm`/`calf_right_cm` first read "en su punto
+más ancho" -- third person, which `tests/test_registro_tu.py`'s tú-register guard correctly
+refused (every other new string already used the impersonal "el punto más ancho" the way
+`hips_cm`'s own line does). Reworded to match; caught by the gate, fixed before merge.
+
+**Tests.** `tests/test_medida_cinta.py` (new): every key's row/range/decimals, propose/apply/undo
+for all eleven, range refusal at both edges for all eleven, the assistant's card in both languages,
+the `measures`/`self` group split, and i18n presence for every key in both languages.
+`tests/test_agente_medida.py`: the exhaustive `self`-group set updated (`waist_cm` removed, a new
+exhaustive `measures`-group assertion added). `tests/test_demo.py`: a new cadence test proving the
+eleven are seeded less often than the weekly weight/waist pair, always on one of the weighed
+Mondays.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 10 foreground chunks
+of 25 test modules each (one further split, chunk 5, into two sub-chunks when the first ran past
+the 600s foreground cap under heavy machine load, unrelated to this diff). Per-chunk counts: 521,
+649, 514, 442, 419, 310, 647, 684, 629, 499, 516 -- summing to **5830**. Reconciled against an
+independent `unittest.TestLoader().discover("tests", top_level_dir=".")` count on the same final
+tree, which also returned **5830** -- exact match. Two real failures surfaced mid-gate
+(`tests/test_registro_tu.py`'s register guard, `tests/test_rendimiento.py`'s `/day/{day}` statement
+ceiling, both described above); fixed, and every chunk that could be affected by either fix --
+`test_registro_tu`, `test_rendimiento`, `test_demo`, `test_medida_cinta`, `test_medida_peso`,
+`test_agente_medida`, `test_i18n_paridad`, the whole of chunk 9, chunk 10, plus
+`test_periodo_pantallas`/`test_hogar_aplica_aviso`/`test_mcp_pendientes`/`test_mcp_visible` (the
+other statement-ceiling-style tests in the suite) -- was re-run on the final tree. Every chunk OK.
+
+**Merge.** The diff touches no schema/migration and no cross-repo contract. Customer-facing bytes
+do change (every string listed below); the spec's own approval reason names this directly ("Customer
+strings change, so the orchestrator measures at 375 px before deploying under the standing go") and
+its `WHAT TO DO` step 4 says in words "Merge if green ... YOU MAY MERGE", so Merge Policy A's
+merge-on-green applies rather than an AWAITING_APPROVAL stop. `git switch main`;
+`git merge --no-ff feat/body-medida-cinta-1`; branch deleted.
+
+**Customer-facing strings added (es / en), one pair per key:** `metric.*`, `trends.q.*`,
+`trends.plain.*` for `arm_relaxed_left_cm`, `arm_relaxed_right_cm`, `arm_flexed_left_cm`,
+`arm_flexed_right_cm`, `chest_cm`, `hips_cm`, `thigh_left_cm`, `thigh_right_cm`, `calf_left_cm`,
+`calf_right_cm`, `neck_cm`; plus `trends.group.measures` ("Medidas" / "Measurements"); plus
+`trends.plain.waist_cm` changed (the group's one-time how-to-measure note appended).
+
+**Open followups.** BODY-MEDIDA-PROFESIONAL-1 (a professional-test entry, e.g. a DEXA result --
+explicitly out of scope here, ruling 6): not queued elsewhere yet, name it so the next slice that
+picks up body composition finds it. BODY-MEDIDA-MAPA-CUERPO-1 (a body-map view of the eleven
+circumferences, so a person sees where each reading sits on a figure rather than a flat list): a
+natural follow-on to `body/anatomia.py`'s existing view machinery, not started here.
+
+Merged as `1df633c785b0258d06315f5bf2f5ab6b45b5ef92`, base `main` at
+`f5dde2165570864e420c3be7efa3d2e14b20f1d7`, tree `4c2d9066d6d868351ff55fc500009dd827a7c21b` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
