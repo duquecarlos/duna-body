@@ -114,6 +114,81 @@ class DiasQueCuentanTest(unittest.TestCase):
         self.assertIn("2026-03-20", dias)
 
 
+FILTRO_TODOS = {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False}
+
+
+class SinMarcarAyerTest(unittest.TestCase):
+    """BODY-REVISION-COPY-GAPS-1 finding 19: Today's own yesterday-unmarked nudge, read from
+    `experimentos.sin_marcar_ayer` -- the experiment's own day filter, a habit-linked experiment
+    never appearing (it is marked through its own habit_check screen, not this route), and the
+    registro row itself, never a live recompute."""
+
+    def _activo(self, conn, person_id, *, fecha_inicio="2026-11-01", habito_id=None,
+                filtro_dias=None):
+        return db.crear_experimento(
+            conn, person_id, "Ducha fria", ["stress_avg"], {"tipo": "dia"},
+            filtro_dias or dict(FILTRO_TODOS), habito_id=habito_id, fecha_inicio=fecha_inicio,
+        )
+
+    def test_unmarked_counting_day_is_returned(self):
+        conn = _mkconn(self)
+        eid = self._activo(conn, 1)
+        conn.commit()
+        pend = experimentos.sin_marcar_ayer(conn, 1, date(2026, 11, 20))
+        self.assertEqual(pend, [{"id": eid, "titulo": "Ducha fria"}])
+
+    def test_marked_yesterday_is_excluded(self):
+        conn = _mkconn(self)
+        eid = self._activo(conn, 1)
+        db.registrar_dia_experimento(conn, eid, 1, "2026-11-20", True)
+        conn.commit()
+        self.assertEqual(experimentos.sin_marcar_ayer(conn, 1, date(2026, 11, 20)), [])
+
+    def test_habit_linked_experiment_never_appears(self):
+        conn = _mkconn(self)
+        gid = goals.propose(conn, 1, "Dormir mejor", "2026-01-01", kind="milestone", deadline="2027-01-01")
+        goals.activate(conn, gid)
+        hid = goals.add_habit(conn, gid, "Ducha fria", {"per": "day", "times": 1})
+        self._activo(conn, 1, habito_id=hid)
+        conn.commit()
+        self.assertEqual(experimentos.sin_marcar_ayer(conn, 1, date(2026, 11, 20)), [])
+
+    def test_yesterday_before_fecha_inicio_is_excluded(self):
+        conn = _mkconn(self)
+        self._activo(conn, 1, fecha_inicio="2026-11-20")  # starts the 20th: the 19th is too early
+        conn.commit()
+        self.assertEqual(experimentos.sin_marcar_ayer(conn, 1, date(2026, 11, 19)), [])
+
+    def test_a_day_the_filter_excludes_is_excluded(self):
+        conn = _mkconn(self)
+        _insert_shift(conn, 1, "2026-11-19", kind="morning")  # not 'afternoon'
+        self._activo(conn, 1, filtro_dias=dict(FILTRO_TARDE))
+        conn.commit()
+        self.assertEqual(experimentos.sin_marcar_ayer(conn, 1, date(2026, 11, 20)), [])
+
+
+class NudgeOcultoTest(unittest.TestCase):
+    """The dismissal is scoped to the render day's own date -- the same `moment`-table convention
+    body/noche_inusual.py's own "Ya lo vi" already uses."""
+
+    def test_round_trip_and_idempotent(self):
+        conn = _mkconn(self)
+        self.assertFalse(experimentos.nudge_oculto(conn, 1, "2026-11-20"))
+        experimentos.marcar_nudge_oculto(conn, 1, "2026-11-20")
+        experimentos.marcar_nudge_oculto(conn, 1, "2026-11-20")  # idempotent: no second row
+        conn.commit()
+        self.assertTrue(experimentos.nudge_oculto(conn, 1, "2026-11-20"))
+        self.assertEqual(
+            conn.execute("SELECT COUNT(*) AS n FROM moment WHERE kind = ?",
+                        (experimentos.NUDGE_DISMISS_KIND,)).fetchone()["n"], 1)
+
+    def test_a_different_day_is_not_dismissed(self):
+        conn = _mkconn(self)
+        experimentos.marcar_nudge_oculto(conn, 1, "2026-11-20")
+        conn.commit()
+        self.assertFalse(experimentos.nudge_oculto(conn, 1, "2026-11-21"))
+
+
 class VeredictoDiaTest(unittest.TestCase):
     def _seed_baseline(self, conn, person_id: int, metric: str, pattern: list[float], dias: int = 120):
         hasta = BASE_INICIO - timedelta(1)

@@ -25,6 +25,20 @@ METRIC = "readiness"
 WEIGHTS = {"hrv": 0.30, "sleep": 0.25, "battery": 0.20, "resting_hr": 0.15, "stress": 0.10}
 MIN_PARTS = 3
 
+# BODY-REVISION-COPY-GAPS-1 ruling 5: one plain, non-medical action WORD per part, versioned
+# alongside the score itself -- the words themselves live in body/i18n/ (today.accion.<word>),
+# never here, so bumping this table never touches a translation. A caller only ever asks this of a
+# part that is actually in a Readiness' own `parts` (never one of its `missing`), so there is no
+# "no data" case to handle here.
+ACCION_VERSION = "v1"
+_ACCION_PARTE = {"hrv": "liviano", "stress": "liviano", "resting_hr": "liviano",
+                 "sleep": "sueno", "battery": "bateria"}
+
+
+def accion(parte_key: str) -> str:
+    """Which `today.accion.<word>` this readiness part's own action line should use (ruling 5)."""
+    return _ACCION_PARTE[parte_key]
+
 # Every metric a `compute` call can touch, across its own vals and every baseline it looks up --
 # the set a caller builds a Lector with before looping `compute` over many days (BODY-RENDIMIENTO-2).
 METRICS = ("hrv_last_night", "sleep_minutes", "sleep_need_min", "body_battery_wake", "resting_hr", "stress_avg")

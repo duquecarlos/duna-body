@@ -5,6 +5,7 @@ LOTE-2) to the person's tap. Invented demo data only, no network.
 """
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from body import config, db, shift_import, web
 from body.i18n import T
-from body.rutas import turnos
+from body.rutas import comun, turnos
 
 PERSON_ID = 1
 
@@ -71,31 +72,43 @@ class HistorialRenderTest(_WebCase):
         self.assertIn(T("es")("shifts.historial.estado.confirmed"), page)
         self.assertIn(T("es")("shifts.historial.estado.superseded"), page)
         self.assertIn(T("es")("shifts.historial.estado.undone"), page)
-        self.assertIn("Patrón", page)
         self.assertIn("2 turnos", page)
         self.assertNotIn("turnos-descartado.json", page)
-        # newest `received` first: the November batch's own file name reads before October's.
-        self.assertLess(page.index("turnos-nov.json"), page.index("turnos-oct.json"))
+        self.assertNotIn("turnos-nov.json", page)
+        self.assertNotIn("turnos-oct.json", page)
+        # the day range it covers (BODY-REVISION-COPY-GAPS-1 finding 16), never the file name:
+        # the confirmed batch's own two current rows (5/6 nov), the others fall back to their own
+        # received date since neither has a current row left.
+        rango_nov = turnos._historial_rango(T("es"), "2026-11-05T12:00:00-05:00", "2026-11-05", "2026-11-06")
+        rango_oct = comun._short_date(T("es"), date(2026, 10, 1))
+        self.assertIn(rango_nov, page)
+        self.assertIn(rango_oct, page)
+        # newest `received` first: the November batch's own range reads before October's.
+        self.assertLess(page.index(rango_nov), page.index(rango_oct))
 
         self.client.post("/settings/language", data={"lang": "en"})
         try:
             page_en = self.client.get("/shifts").text
             self.assertIn(T("en")("shifts.historial.estado.confirmed"), page_en)
-            self.assertIn("Pattern", page_en)
             self.assertIn("2 shifts", page_en)
         finally:
             self.client.post("/settings/language", data={"lang": "es"})
 
     def test_limited_to_the_last_10(self):
+        # Days 21-31 (never 1-11): two digits throughout, so no day's own short date can ever
+        # read as a substring of another's (unlike "1 ene 2026" inside "11 ene 2026") -- the
+        # assertNotIn below needs a clean boundary, not a lucky one.
+        rangos = []
         for i in range(11):
-            day = f"2026-01-{i + 1:02d}"
+            day = f"2026-01-{21 + i:02d}"
             bid = _insert_batch(self.conn, PERSON_ID, f"turnos-{i}.json", f"{day}T12:00:00-05:00", "confirmed")
             _insert_shift_row(self.conn, PERSON_ID, day, bid)
+            rangos.append(comun._short_date(T("es"), date(2026, 1, 21 + i)))
         self.conn.commit()
         page = self.client.get("/shifts").text
-        self.assertNotIn("turnos-0.json", page)  # the oldest of 11: excluded
-        for i in range(1, 11):
-            self.assertIn(f"turnos-{i}.json", page)
+        self.assertNotIn(rangos[0], page)  # the oldest of 11: excluded
+        for rango in rangos[1:]:
+            self.assertIn(rango, page)
 
     def test_deshacer_offered_only_on_confirmed_or_superseded_with_at_least_one_current_row(self):
         con_turnos_id = _insert_batch(self.conn, PERSON_ID, "turnos-con.json", "2026-11-01T12:00:00-05:00",

@@ -475,5 +475,53 @@ class HabitLinkedExperimentTest(unittest.TestCase):
         self.assertEqual(r2.status_code, 404)
 
 
+class NudgeAyerTest(unittest.TestCase):
+    """BODY-REVISION-COPY-GAPS-1 finding 19: Today's own one-line nudge for an active,
+    non-habit experiment whose yesterday was never marked -- HOY (BASE_INICIO + 4) is one day
+    after these 4-day experiments' own last test day, so that last day IS "yesterday" here."""
+
+    def test_single_unmarked_shows_one_tap_mark_button(self):
+        conn = _reset_db(self)
+        eid, dias = _build_experimento(conn, 1, "Ducha fria", "stress_avg", [20.0] * 4,
+                                       ocurrio=[True, True, True, False])
+        ayer = dias[-1]
+
+        r = _get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(T("es")("today.experimento_nudge_uno", titulo="Ducha fria"), r.text)
+        self.assertIn(f'action="/experiments/{eid}/day"', r.text)
+        self.assertIn(f'value="{ayer}"', r.text)
+        self.assertIn('name="ocurrio" value="1"', r.text)
+        self.assertIn('action="/experiments/nudge/dismiss"', r.text)
+
+    def test_marked_yesterday_shows_no_nudge(self):
+        conn = _reset_db(self)
+        _build_experimento(conn, 1, "Ducha fria", "stress_avg", [20.0] * 4)  # every day marked
+        r = _get("/")
+        self.assertNotIn('action="/experiments/nudge/dismiss"', r.text)
+
+    def test_two_unmarked_names_only_the_count_with_no_button(self):
+        conn = _reset_db(self)
+        eid1, _ = _build_experimento(conn, 1, "Ducha fria", "stress_avg", [20.0] * 4,
+                                     ocurrio=[True, True, True, False])
+        db.crear_experimento(conn, 1, "Agua fria", ["resting_hr"], {"tipo": "dia"},
+                             {"turno_en": None, "turno_fuera": None, "excluir_tras_noche": False},
+                             fecha_inicio="2026-11-01")
+        conn.commit()
+        r = _get("/")
+        self.assertIn(T("es")("today.experimento_nudge_varios", n=2), r.text)
+        self.assertIn('href="/goals"', r.text)
+        self.assertNotIn(f'action="/experiments/{eid1}/day"', r.text)
+
+    def test_dismissed_nudge_does_not_reappear_the_same_day(self):
+        conn = _reset_db(self)
+        _build_experimento(conn, 1, "Ducha fria", "stress_avg", [20.0] * 4,
+                           ocurrio=[True, True, True, False])
+        r = _post("/experiments/nudge/dismiss", {"back": "/"})
+        self.assertEqual(r.status_code, 303)
+        r2 = _get("/")
+        self.assertNotIn('action="/experiments/nudge/dismiss"', r2.text)
+
+
 if __name__ == "__main__":
     unittest.main()

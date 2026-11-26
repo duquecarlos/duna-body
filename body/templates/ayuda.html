@@ -19,6 +19,9 @@
 {% for tarea in capitulo.tareas %}
 <div class="card" id="{{ tarea.id }}">
   <div class="q">{{ tarea.titulo }}</div>
+  <!-- BODY-REVISION-COPY-GAPS-1 finding 21: a thumbnail for this task could sit here, between the
+       title and the text answer -- no image yet (ayuda.miniatura, a named slot with nothing in it). -->
+  <p class="read">{{ tarea.respuesta }}</p>
   {% if tarea.video %}
   <video controls preload="none" {% if tarea.video.poster %}poster="{{ tarea.video.poster }}"{% endif %}
          class="ayuda-img">
@@ -27,7 +30,7 @@
     {% if tarea.video.subtitulos %}<track kind="subtitles" src="{{ tarea.video.subtitulos }}" default>{% endif %}
   </video>
   {% else %}
-  <p class="note">{{ t('ayuda.en_preparacion') }}</p>
+  <p class="k">{{ t('ayuda.en_preparacion') }}</p>
   {% endif %}
   {% if tarea.pantalla_link %}
   <p class="read"><a class="taplink" href="{{ tarea.pantalla_link }}">{{ t('ayuda.ir_a_pantalla') }} →</a></p>

@@ -38,16 +38,34 @@ _HISTORIAL_DESHACER_ESTADOS = ("confirmed", "superseded")
 _HISTORIAL_LIMITE = 10
 
 
+def _historial_rango(t: T, received: str, first_day: str | None, last_day: str | None) -> str:
+    """BODY-REVISION-COPY-GAPS-1 finding 16: the day range THIS batch's own CURRENT rows cover
+    -- never the file name. No current row at all (an 'undone' batch, by shift_import.undo's own
+    invariant, or a 'confirmed' one every later batch has since overwritten) falls back to the
+    mail's own received date, the one date this row always carries; a single current day reads as
+    that one date, never a dash to itself."""
+    if first_day is None:
+        return _batch_date(t, received)
+    d0, d1 = date.fromisoformat(first_day), date.fromisoformat(last_day)
+    if d0 == d1:
+        return comun._short_date(t, d0)
+    return t("shifts.historial.rango", desde=comun._short_date(t, d0), hasta=comun._short_date(t, d1))
+
+
 def _historial_filas(t: T, conn, person_id: int) -> list[dict]:
     """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: newest `received` first, each row's {n} the
     batch's CURRENT shift rows (by batch_id, never its original day_count) -- one combined SELECT
-    (a LEFT JOIN + GROUP BY) so the history never costs more than one extra statement over the
-    page's own existing cost. Deshacer (ruling 2) is offered only on a 'confirmed'/'superseded'
+    (a LEFT JOIN + GROUP BY, MIN/MAX day read as two correlated subqueries rather than a second
+    statement) so the history never costs more than one extra statement over the page's own
+    existing cost. The day range it covers (BODY-REVISION-COPY-GAPS-1 finding 16) replaces the
+    raw file name this row used to carry; Deshacer moves behind a small "More" control in the
+    template, with the same confirmation as before, offered only on a 'confirmed'/'superseded'
     row that still has at least one current row."""
     placeholders = ",".join("?" * len(_HISTORIAL_ESTADOS))
     rows = conn.execute(
-        f"SELECT b.id AS id, b.received AS received, b.file_name AS file_name, b.kind AS kind, "
-        f"b.status AS status, COUNT(s.day) AS n FROM shift_batch b LEFT JOIN shift s ON s.batch_id = b.id "
+        f"SELECT b.id AS id, b.received AS received, b.status AS status, COUNT(s.day) AS n, "
+        f"MIN(s.day) AS first_day, MAX(s.day) AS last_day "
+        f"FROM shift_batch b LEFT JOIN shift s ON s.batch_id = b.id "
         f"WHERE b.person_id = ? AND b.status IN ({placeholders}) "
         f"GROUP BY b.id ORDER BY b.received DESC, b.extracted_at DESC LIMIT ?",
         (person_id, *_HISTORIAL_ESTADOS, _HISTORIAL_LIMITE),
@@ -55,8 +73,8 @@ def _historial_filas(t: T, conn, person_id: int) -> list[dict]:
     filas = []
     for r in rows:
         n = r["n"]
-        origen = t("shifts.historial.patron") if r["kind"] == "pattern" else r["file_name"]
-        linea = t("shifts.historial.linea", fecha=_batch_date(t, r["received"]), origen=origen,
+        linea = t("shifts.historial.linea",
+                  rango=_historial_rango(t, r["received"], r["first_day"], r["last_day"]),
                   n_frag=_frag(t, "shifts.historial.turnos", n, n=n),
                   estado=t("shifts.historial.estado." + r["status"]))
         filas.append({"linea": linea, "batch_id": r["id"],

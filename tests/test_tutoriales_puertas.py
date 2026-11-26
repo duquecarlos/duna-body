@@ -129,7 +129,7 @@ class AyudaRendersTest(_LocalModeTestCase):
             self.assertIn(c["titulo"], r.text)
         for t in data["tareas"]:
             self.assertIn(t["titulo"], r.text)
-        self.assertIn("Video en preparación", r.text)
+        self.assertIn("Video más tarde", r.text)
 
     def test_task_in_manifest_shows_video_with_track(self):
         manifest = {
@@ -153,8 +153,8 @@ class AyudaRendersTest(_LocalModeTestCase):
         self.assertIn("crear-una-meta-v.mp4", r.text)
         self.assertIn('<track kind="subtitles"', r.text)
         self.assertIn("crear-una-meta.vtt", r.text)
-        # a task with no manifest entry still shows "Video en preparación" on the very same page
-        self.assertIn("Video en preparación", r.text)
+        # a task with no manifest entry still shows "Video más tarde" on the very same page
+        self.assertIn("Video más tarde", r.text)
 
     def test_env_unset_or_fetch_raising_still_200_with_every_task(self):
         data = tutoriales.catalogo()

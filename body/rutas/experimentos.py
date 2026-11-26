@@ -10,7 +10,7 @@ copied -- this module's own card and detail builders are its only other caller t
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -93,6 +93,28 @@ def resumen_metas(conn, t, person_id: int, today: date) -> tuple[list, list]:
     cerrados = [_tarjeta_desde_veredicto(conn, t, person_id, r, experimentos.veredicto(conn, person_id, r["id"], hoy=today), today)
                 for r in db.experimentos(conn, person_id, "cerrado")]
     return activos, cerrados
+
+
+def nudge_ayer_ctx(conn, t, person_id: int, today: date) -> dict | None:
+    """BODY-REVISION-COPY-GAPS-1 finding 19: Today's own one-line nudge for an active,
+    non-habit experiment whose YESTERDAY counted for its own day filter but was never marked --
+    the common case of forgetting to tap the Hecho/No buttons before the day ended. At most one
+    line: a single unmarked experiment gets its own one-tap "Mark yesterday" (the same POST
+    /experiments/{id}/day route today's own buttons already use, day=yesterday, ocurrio=1); two
+    or more name only the count, since there is no single button to offer. `experimentos.
+    nudge_oculto` silences the whole line for the rest of today, read fresh again tomorrow since
+    "yesterday" itself has moved on by then."""
+    if experimentos.nudge_oculto(conn, person_id, today.isoformat()):
+        return None
+    ayer = today - timedelta(1)
+    pendientes = experimentos.sin_marcar_ayer(conn, person_id, ayer)
+    if not pendientes:
+        return None
+    if len(pendientes) == 1:
+        e = pendientes[0]
+        return {"single": True, "id": e["id"], "ayer_iso": ayer.isoformat(),
+                "texto": t("today.experimento_nudge_uno", titulo=e["titulo"])}
+    return {"single": False, "texto": t("today.experimento_nudge_varios", n=len(pendientes))}
 
 
 def hoy_contexto(conn, t, person_id: int, today: date) -> list[dict]:
@@ -178,6 +200,21 @@ def experiment_detail(experiment_id: int, person_id: int = Depends(identity.curr
     card["explicacion"] = t("experimentos.explicacion")
     return comun._render("experiment.html", t=t, tab="goals", experiment=card,
                          turnos=db.trabaja_turnos_si(conn, person_id))
+
+
+@router.post("/experiments/nudge/dismiss")
+@comun._cierra_conexion_async
+async def experimento_nudge_dismiss(request: Request, person_id: int = Depends(identity.current_person_id)):
+    """BODY-REVISION-COPY-GAPS-1 finding 19: "a dismissal lasts for the day" -- scoped to
+    TODAY's own date (comun._today_local), the same person-scoped moment-table convention
+    body/noche_inusual.py's own "Ya lo vi" already uses. An optional `back` field, read the same
+    way (cuenta.safe_return_to), so Hoy's own nudge can dismiss without leaving Hoy."""
+    conn, person, _ = comun._ctx(person_id)
+    today = comun._today_local(person)
+    experimentos.marcar_nudge_oculto(conn, person_id, today.isoformat())
+    f = await comun._form(request)
+    back = cuenta.safe_return_to(f.get("back"))
+    return RedirectResponse(back, status_code=303)
 
 
 @router.post("/experiments/{experiment_id}/close")

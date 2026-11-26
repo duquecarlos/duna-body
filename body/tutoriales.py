@@ -107,6 +107,15 @@ def _titulo_tarea(t: T | None, tarea: dict) -> str:
     return tarea["titulo"] if valor == clave else valor
 
 
+def respuesta_tarea(t: T, tarea_id: str) -> str:
+    """BODY-REVISION-COPY-GAPS-1 finding 21: the one-line text answer for this task, read from
+    `tutoriales.respuesta.<id>` -- in place of the bare "video coming soon" every Ayuda card used
+    to show. Every task in the catalog has one in both languages (tests/test_tutoriales.py's own
+    coverage test pins it directly from the catalog), so there is no catalog-side fallback the way
+    `_titulo_tarea` needs one."""
+    return t("tutoriales.respuesta." + tarea_id)
+
+
 def capitulos_con_tareas(t: T | None = None, incluir_turnos: bool = True) -> list[dict]:
     """Chapters in order, each with its tasks in order (tutoriales-v1 section 5.1, Ayuda).
     `incluir_turnos=False` (BODY-TURNOS-OPCIONAL-3) leaves out the `turnos` chapter entirely, for a

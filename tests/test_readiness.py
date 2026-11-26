@@ -221,5 +221,24 @@ class ReadinessLectorEqualityTest(unittest.TestCase):
         self.assertEqual(with_lector.missing, without.missing)
 
 
+class AccionPorParteTest(unittest.TestCase):
+    """BODY-REVISION-COPY-GAPS-1 finding 22: a plain, non-medical action word per part -- HRV,
+    stress and resting HR share one ("liviano": keep today easy), sleep and Body Battery get their
+    own."""
+
+    def test_every_part_has_an_action_word(self):
+        for key in readiness.WEIGHTS:
+            self.assertIsInstance(readiness.accion(key), str)
+
+    def test_hrv_stress_resting_hr_share_the_same_word(self):
+        self.assertEqual(readiness.accion("hrv"), readiness.accion("stress"))
+        self.assertEqual(readiness.accion("hrv"), readiness.accion("resting_hr"))
+
+    def test_sleep_and_battery_get_their_own_word(self):
+        self.assertNotEqual(readiness.accion("sleep"), readiness.accion("hrv"))
+        self.assertNotEqual(readiness.accion("battery"), readiness.accion("hrv"))
+        self.assertNotEqual(readiness.accion("sleep"), readiness.accion("battery"))
+
+
 if __name__ == "__main__":
     unittest.main()

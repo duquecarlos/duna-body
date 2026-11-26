@@ -84,7 +84,8 @@
       <p class="read mt-0">{{ h.linea }}</p>
       {% if h.deshacer %}
       <details class="files mt-6">
-        <summary class="taplink">{{ t('shifts.historial.deshacer') }}</summary>
+        <summary class="taplink">{{ t('shifts.historial.mas') }}</summary>
+        <p class="k mt-6">{{ t('shifts.historial.deshacer') }}</p>
         <form method="post" action="/shifts/undo" class="mt-6">
           <input type="hidden" name="batch_id" value="{{ h.batch_id }}">
           <div class="confirm-actions">
