@@ -180,11 +180,13 @@ class WebUltimaSemanaTest(_SeedMixin, unittest.TestCase):
         conn.commit()
 
     def test_shifts_shows_the_section_in_spanish(self):
+        """BODY-REVISION-TURNOS-TARJETAS-1 ruling 2: a 3-night block names itself a block, not a
+        week (the "week" word is reserved for blocks of 5+ nights)."""
         conn = self._reset_db("ultima_es.db")
         self._seed_three_and_last(conn)
         r = self.client.get("/shifts")
         self.assertEqual(r.status_code, 200)
-        self.assertIn(_t("es", "shifts.ultima.title"), r.text)
+        self.assertIn("Tu último bloque de 3 noches", r.text)
         self.assertIn(_t("es", "metric.resting_hr"), r.text)
         self.assertIn(_t("es", "shifts.ultima.word.peor"), r.text)
         self.assertIn(_t("es", "shifts.word.mas"), r.text)
@@ -196,7 +198,7 @@ class WebUltimaSemanaTest(_SeedMixin, unittest.TestCase):
         try:
             r = self.client.get("/shifts")
             self.assertEqual(r.status_code, 200)
-            self.assertIn(_t("en", "shifts.ultima.title"), r.text)
+            self.assertIn("Your last block of 3 nights", r.text)
             self.assertIn(_t("en", "shifts.ultima.word.peor"), r.text)
         finally:
             self.client.post("/settings/language", data={"lang": "es"})
@@ -219,7 +221,8 @@ class WebUltimaSemanaTest(_SeedMixin, unittest.TestCase):
         conn.commit()
         r = self.client.get("/shifts")
         self.assertEqual(r.status_code, 200)
-        self.assertNotIn(_t("es", "shifts.ultima.title"), r.text)
+        self.assertNotIn("último bloque", r.text)
+        self.assertNotIn(_t("es", "shifts.ultima.title_semana"), r.text)
 
 
 if __name__ == "__main__":

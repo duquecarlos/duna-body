@@ -66,6 +66,14 @@ MODELO = {
     # per-hour usuals, one extra layer of averaging on either side.
     "ruido_min_diferencia_bpm": 2.0,
     "max_hallazgos": 3,
+    # BODY-REVISION-TURNOS-TARJETAS-1 ruling 1: the rank word for a lone finding, read off in
+    # order (first finding -> "mayor", second -> "tambien_claro", third -> "menor") -- data here,
+    # versioned next to MODELO, rather than hand-typed where the words are rendered.
+    "rango_orden": ("mayor", "tambien_claro", "menor"),
+    # Exact equality: two findings "tie" only when their |diff| (already an integer, both sides
+    # of the subtraction pre-rounded in estudio()) match exactly -- never a near-miss read as a
+    # tie. Kept as its own named figure so a future looser tie rule has one place to change.
+    "empate_tolerancia_bpm": 0.0,
 }
 
 REASON_CODES = db.TURNO_FC_MOTIVOS
@@ -293,7 +301,27 @@ def estudio(conn, person_id: int) -> dict:
                                "referencia": referencia_mediana})
 
     hallazgos.sort(key=lambda h: -abs(h["diff"]))
-    return {"kinds": kinds_out, "hallazgos": hallazgos[:MODELO["max_hallazgos"]]}
+    return {"kinds": kinds_out, "hallazgos": agrupar_hallazgos(hallazgos)[:MODELO["max_hallazgos"]]}
+
+
+def agrupar_hallazgos(hallazgos: list[dict]) -> list[dict]:
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 1: `hallazgos` (estudio()'s own kind-level
+    differences, already sorted desc by |diff|) grouped by TIED magnitude, so two kinds that tie
+    for the same rank read as one finding ("empate") instead of each silently claiming "the
+    biggest difference". MODELO['empate_tolerancia_bpm'] is the tie rule; MODELO['rango_orden'] is
+    the rank word for a lone group, read off in order. Never reorders `hallazgos` -- a group only
+    ever merges ADJACENT entries, since a tie's own |diff| is identical and the list is already
+    sorted by it, so the cutoff to MODELO['max_hallazgos'] groups never splits a tied pair."""
+    tol = MODELO["empate_tolerancia_bpm"]
+    grupos: list[list[dict]] = []
+    for h in hallazgos:
+        if grupos and abs(abs(grupos[-1][0]["diff"]) - abs(h["diff"])) <= tol:
+            grupos[-1].append(h)
+        else:
+            grupos.append([h])
+    orden = MODELO["rango_orden"]
+    return [{"rango": "empate" if len(g) > 1 else orden[min(i, len(orden) - 1)], "miembros": g}
+            for i, g in enumerate(grupos)]
 
 
 def main(argv: list[str] | None = None) -> int:

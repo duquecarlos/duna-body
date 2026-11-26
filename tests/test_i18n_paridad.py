@@ -142,6 +142,9 @@ _FIXED_DYNAMIC = {
     "periodo.kind.+": [k for k, *_ in db.PERIOD_KINDS],
     # body/rutas/turnos.py _turno_fc_direccion(): the only two words it returns.
     "shifts.pulso.+": list(turnos._PULSO_DIRECCION_WORDS),
+    # body/rutas/turnos.py _turno_fc_hallazgo_linea(): a lone finding's rank word, off
+    # turno_fc.MODELO['rango_orden'] -- "empate" never reaches this prefix (its own key).
+    "shifts.pulso.rango.+": list(turnos._PULSO_RANGO_PALABRAS),
     # body/rutas/turnos.py _turno_fc_sueno_lineas(): the fixed corta/normal sleep split (the same
     # one body/turno_fc.py's own estudio() uses).
     "shifts.pulso.sueno_+": ["corta", "normal"],

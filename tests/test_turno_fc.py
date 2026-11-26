@@ -378,7 +378,30 @@ class EstudioTest(unittest.TestCase):
             self._insertar_fila(conn, day, "night", 58.0, 62.0)  # diff=4
         conn.commit()
         est = turno_fc.estudio(conn, 1)
-        self.assertEqual([h["kind"] for h in est["hallazgos"]], ["morning", "night"])
+        self.assertEqual([g["miembros"][0]["kind"] for g in est["hallazgos"]], ["morning", "night"])
+        self.assertEqual([g["rango"] for g in est["hallazgos"]], ["mayor", "tambien_claro"])
+
+    def test_dos_turnos_con_la_misma_magnitud_se_agrupan_en_empate(self):
+        """BODY-REVISION-TURNOS-TARJETAS-1 ruling 1: two kinds tied for the same rank read as one
+        "empate" group instead of each silently claiming "the biggest difference"."""
+        conn = _mkconn(self)
+        for i in range(6):
+            day = f"2026-09-{i + 1:02d}"
+            self._insertar_fila(conn, day, "morning", 60.0, 70.0)  # diff=10
+        for i in range(6):
+            day = f"2026-10-{i + 1:02d}"
+            self._insertar_fila(conn, day, "night", 60.0, 70.0)  # diff=10, tied with morning
+        for i in range(6):
+            day = f"2026-08-{i + 1:02d}"
+            self._insertar_fila(conn, day, "afternoon", 58.0, 62.0)  # diff=4
+        conn.commit()
+        est = turno_fc.estudio(conn, 1)
+        self.assertEqual(len(est["hallazgos"]), 2)
+        empate, menor = est["hallazgos"]
+        self.assertEqual(empate["rango"], "empate")
+        self.assertEqual({m["kind"] for m in empate["miembros"]}, {"morning", "night"})
+        self.assertEqual(menor["rango"], "tambien_claro")
+        self.assertEqual(menor["miembros"][0]["kind"], "afternoon")
 
     def test_sin_filas_la_seccion_queda_vacia(self):
         conn = _mkconn(self)

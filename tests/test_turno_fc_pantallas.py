@@ -161,6 +161,36 @@ class PulsoSeccionTest(unittest.TestCase):
         self.assertIn("muy similar a las mismas horas en un día de descanso", r.text)
         self.assertNotIn("Lo que más resalta", r.text)  # no finding clears the noise floor
 
+    def test_dos_turnos_empatados_comparten_una_frase_en_es(self):
+        """BODY-REVISION-TURNOS-TARJETAS-1 ruling 1: tied kinds read as one "empate" sentence
+        naming both, instead of each claiming "la mayor diferencia"."""
+        conn = _reset_db(self)
+        _activar_turnos(conn)
+        for i in range(6):
+            _insertar_fila(conn, 1, f"2026-09-{i + 1:02d}", "morning", 60.0, 70.0)  # diff=10
+        for i in range(6):
+            _insertar_fila(conn, 1, f"2026-10-{i + 1:02d}", "night", 60.0, 70.0)  # diff=10, tied
+        conn.commit()
+        r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("2 diferencias del mismo tamaño entre tus turnos:", r.text)
+        self.assertIn("Mañana (10 lpm por debajo de tus días de descanso) y "
+                      "Noche (10 lpm por debajo de tus días de descanso)", r.text)
+
+    def test_dos_turnos_empatados_comparten_una_frase_en_en(self):
+        conn = _reset_db(self)
+        db.set_language(conn, "en", 1)
+        _activar_turnos(conn)
+        for i in range(6):
+            _insertar_fila(conn, 1, f"2026-09-{i + 1:02d}", "morning", 60.0, 70.0)
+        for i in range(6):
+            _insertar_fila(conn, 1, f"2026-10-{i + 1:02d}", "night", 60.0, 70.0)
+        conn.commit()
+        r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("2 differences of the same size among your shifts:", r.text)
+        self.assertIn("Morning (10 bpm below your days off) and Night (10 bpm below your days off)", r.text)
+
 
 class SuenoSplitTest(unittest.TestCase):
     """BODY-TURNO-FC-1-M: the sleep split under a kind renders as ONE line naming both buckets, and
@@ -236,19 +266,19 @@ class RecuperacionSingularTest(unittest.TestCase):
         t = T("es")
         u = {"recuperacion_dias": 1, "recuperacion_mediana": 1}
         self.assertEqual(_turnos_ultima_recuperacion(t, u),
-                          "Volviste a tu normal en 1 día (antes, la mitad de las veces: 1 día o menos)")
+                          "Volviste a tu normal en 1 día (tus bloques antes de este: volviste en unos 1 día)")
 
     def test_varios_dias_de_recuperacion_y_mediana_de_un_dia_es(self):
         t = T("es")
         u = {"recuperacion_dias": 5, "recuperacion_mediana": 1}
         self.assertEqual(_turnos_ultima_recuperacion(t, u),
-                          "Volviste a tu normal en 5 días (antes, la mitad de las veces: 1 día o menos)")
+                          "Volviste a tu normal en 5 días (tus bloques antes de este: volviste en unos 1 día)")
 
     def test_un_dia_de_recuperacion_y_mediana_de_varios_es(self):
         t = T("es")
         u = {"recuperacion_dias": 1, "recuperacion_mediana": 3}
         self.assertEqual(_turnos_ultima_recuperacion(t, u),
-                          "Volviste a tu normal en 1 día (antes, la mitad de las veces: 3 días o menos)")
+                          "Volviste a tu normal en 1 día (tus bloques antes de este: volviste en unos 3 días)")
 
     def test_un_dia_de_recuperacion_sin_mediana_en(self):
         t = T("en")
@@ -259,13 +289,13 @@ class RecuperacionSingularTest(unittest.TestCase):
         t = T("en")
         u = {"recuperacion_dias": 1, "recuperacion_mediana": 1}
         self.assertEqual(_turnos_ultima_recuperacion(t, u),
-                          "You were back to your normal in 1 day (before, half the time: 1 day or fewer)")
+                          "You were back to your normal in 1 day (your blocks before this one: back in about 1 day)")
 
     def test_varios_dias_sin_singular_en(self):
         t = T("en")
         u = {"recuperacion_dias": 4, "recuperacion_mediana": 2}
         self.assertEqual(_turnos_ultima_recuperacion(t, u),
-                          "You were back to your normal in 4 days (before, half the time: 2 days or fewer)")
+                          "You were back to your normal in 4 days (your blocks before this one: back in about 2 days)")
 
 
 class StatementCeilingTest(unittest.TestCase):

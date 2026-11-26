@@ -70,6 +70,15 @@ _STRIP_DAYS = _STRIP_WEEKS * 7
 _STRIP_KIND_ORDER = ["morning", "afternoon", "night", "day", "off", "other", "none"]
 
 
+def _strip_week_label(t: T, d: date, con_anio: bool) -> str:
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 4: a week's own starting date, short (day + abbreviated
+    month, the same two fields comun._short_date uses) -- WITHOUT the year unless the whole 8-week
+    range crosses one, so the common case stays short. Not comun._short_date itself: that one
+    always carries the year, and body/rutas/comun.py is not in this slice's touches."""
+    mes = t("date.months")[d.month - 1][:3]
+    return f"{d.day} {mes} {d.year}" if con_anio else f"{d.day} {mes}"
+
+
 def _turnos_filas(t: T, defs: dict, resumen: dict) -> list[dict]:
     filas = []
     for key in turnos_costo.MODELO["metricas"]:
@@ -122,29 +131,65 @@ def _frag(t: T, base: str, count: int, **kw) -> str:
 
 
 def _turnos_ultima_recuperacion(t: T, u: dict) -> str:
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 3: a plain comparison against the person's own
+    earlier blocks -- "your blocks before this one: back in about M days" -- never the "before,
+    half the time: M days or fewer" phrasing a reader found hard to parse."""
     if u["recuperacion_dias"] is None:
         return t("shifts.ultima.recuperacion_sin_dato")
     d = u["recuperacion_dias"]
     if u["recuperacion_mediana"] is None:
         return t(_singular_key("shifts.ultima.recuperacion_sin_anteriores", d), d=d)
     m = u["recuperacion_mediana"]
-    mediana = t(_singular_key("shifts.ultima.recuperacion_mediana", m), m=m)
-    return t(_singular_key("shifts.ultima.recuperacion", d), d=d, mediana=mediana)
+    antes = t(_singular_key("shifts.ultima.recuperacion_antes_dias", m), m=m)
+    return t(_singular_key("shifts.ultima.recuperacion", d), d=d, antes=antes)
 
 
-def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict) -> dict | None:
+_ULTIMA_SEMANA_MIN_NOCHES = 5  # BODY-REVISION-TURNOS-TARJETAS-1 ruling 2: "week" only at 5+ nights.
+
+
+def _turnos_ultima_titulo(t: T, dias: int) -> str:
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 2: names the block by what it is -- "your last block
+    of N nights" below _ULTIMA_SEMANA_MIN_NOCHES, "your last night week" at or above it. Never
+    changes what counts as a block (turnos_costo.bloques_noche's own 1+ night run), only how the
+    card names it."""
+    if dias >= _ULTIMA_SEMANA_MIN_NOCHES:
+        return t("shifts.ultima.title_semana")
+    return t(_singular_key("shifts.ultima.title_bloque", dias), n=dias)
+
+
+def _turnos_ultima_hace(t: T, hoy: date, fin: date) -> str:
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 2: how long ago the block ended, in whichever unit
+    reads naturally -- days under a week, weeks from a week on (rounded, so "ended 13 days ago"
+    reads "2 weeks ago" rather than "1.9 weeks ago")."""
+    dias = (hoy - fin).days
+    if dias <= 0:
+        return t("shifts.ultima.hace_hoy")
+    if dias < 7:
+        return t(_singular_key("shifts.ultima.hace_dias", dias), n=dias)
+    semanas = round(dias / 7)
+    return t(_singular_key("shifts.ultima.hace_semanas", semanas), n=semanas)
+
+
+def _turnos_ultima_ctx(t: T, defs: dict, resumen: dict, hoy: date) -> dict | None:
     """BODY-TURNOS-REFERENCIA-NOCHE-1: the last complete night block against the person's own
     earlier night blocks -- None when there is no completed block at all; a gap card when no metric
-    reached MIN_BLOQUES_PREVIOS; otherwise the metric rows and the recovery line."""
+    reached MIN_BLOQUES_PREVIOS; otherwise the metric rows and the recovery line.
+    BODY-REVISION-TURNOS-TARJETAS-1 ruling 2: `titulo` names the block and `sub` says how long ago
+    it ended, in both the gap and the full card."""
     u = resumen.get("ultima_semana")
     if u is None:
         return None
+    dias = (date.fromisoformat(u["fin"]) - date.fromisoformat(u["inicio"])).days + 1
+    titulo = _turnos_ultima_titulo(t, dias)
     if u["motivo"] is not None:
-        return {"gap": True, "faltan": t("shifts.ultima.faltan", n=turnos_costo.MIN_BLOQUES_PREVIOS)}
+        return {"gap": True, "titulo": titulo,
+                "faltan": t("shifts.ultima.faltan", n=turnos_costo.MIN_BLOQUES_PREVIOS)}
+    hace = _turnos_ultima_hace(t, hoy, date.fromisoformat(u["fin"]))
     return {
         "gap": False,
+        "titulo": titulo,
         "sub": t("shifts.ultima.sub", inicio=comun._short_date(t, date.fromisoformat(u["inicio"])),
-                  fin=comun._short_date(t, date.fromisoformat(u["fin"])), n=u["n"]),
+                  fin=comun._short_date(t, date.fromisoformat(u["fin"])), hace=hace, n=u["n"]),
         "filas": _turnos_ultima_filas(t, defs, u["metricas"]),
         "recuperacion": _turnos_ultima_recuperacion(t, u),
     }
@@ -387,6 +432,10 @@ def _perfil_hrv_ctx(t: T, perfil: dict | None, defs: dict) -> dict | None:
 # tests/test_i18n_paridad.py's own dynamic-prefix coverage, not hand-typed there.
 _PULSO_DIRECCION_WORDS = ("bajo", "alto")
 _PULSO_KIND_ORDER = ["morning", "afternoon", "night", "day", "other"]
+# BODY-REVISION-TURNOS-TARJETAS-1 ruling 1: the three words `t("shifts.pulso.rango." + rango)`
+# resolves to -- turno_fc.MODELO's own rank order, read by tests/test_i18n_paridad.py's dynamic-
+# prefix coverage, not hand-typed there. "empate" never reaches this prefix (it has its own key).
+_PULSO_RANGO_PALABRAS = tuple(turno_fc.MODELO["rango_orden"])
 
 
 def _turno_fc_direccion(diff: float) -> str | None:
@@ -424,10 +473,35 @@ def _turno_fc_sueno_lineas(t: T, data: dict) -> list[str]:
               fc_normal=t.num(normal["fc_mediana"]), n_normal=normal["n"])]
 
 
-def _turno_fc_hallazgo_linea(t: T, h: dict) -> str:
-    direccion = _turno_fc_direccion(h["diff"])
-    return t("shifts.pulso.hallazgo", kind=t("shift.kind." + h["kind"]), diff=t.num(abs(h["diff"])),
-             direccion=t("shifts.pulso." + direccion))
+def _lista_breve(t: T, items: list[str]) -> str:
+    """Joins 2+ short phrases the way each language reads a tied list -- "A y B" (es), "A and B"
+    (en) -- the same join rule body/rutas/hoy.py's own `_lista_natural` uses for unusual-night
+    signals, kept local here since body/rutas/comun.py is not in this slice's touches."""
+    if len(items) == 1:
+        return items[0]
+    if t.lang == "en":
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return ", ".join(items[:-1]) + f", and {items[-1]}"
+    if len(items) == 2:
+        return f"{items[0]} y {items[1]}"
+    return ", ".join(items[:-1]) + f" y {items[-1]}"
+
+
+def _turno_fc_hallazgo_linea(t: T, g: dict) -> str:
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 1: a lone finding (`g['miembros']` has one member)
+    gets its rank word off `shifts.pulso.rango.<rango>`; a tied group (`g['rango'] == 'empate'`)
+    reads as one sentence naming every tied kind, instead of each silently claiming the same
+    rank."""
+    if g["rango"] == "empate":
+        piezas = [t("shifts.pulso.hallazgo_empate_item", kind=t("shift.kind." + m["kind"]),
+                     diff=t.num(abs(m["diff"])), direccion=t("shifts.pulso." + _turno_fc_direccion(m["diff"])))
+                  for m in g["miembros"]]
+        return t("shifts.pulso.hallazgo_empate", n=len(piezas), lista=_lista_breve(t, piezas))
+    m = g["miembros"][0]
+    direccion = _turno_fc_direccion(m["diff"])
+    return t("shifts.pulso.hallazgo", kind=t("shift.kind." + m["kind"]), diff=t.num(abs(m["diff"])),
+             direccion=t("shifts.pulso." + direccion), rango=t("shifts.pulso.rango." + g["rango"]))
 
 
 def _turno_fc_ctx(t: T, est: dict) -> dict | None:
@@ -450,6 +524,11 @@ def _turno_fc_ctx(t: T, est: dict) -> dict | None:
 
 
 def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[dict], list[dict]]:
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 4: the 56 days grouped into _STRIP_WEEKS weeks of 7,
+    each carrying its own starting-date label (`_strip_week_label`) -- a header per week instead of
+    one flat, unlabelled strip. The year is shown only when the 8-week range crosses one. Each
+    week's own 7 cells keep the existing .strip CSS grid (7 equal columns), so nothing new scrolls
+    sideways at 375px -- only the label rows add height."""
     start = today_local - timedelta(_STRIP_DAYS - 1)
     rows = conn.execute(
         "SELECT day, kind FROM shift WHERE person_id = ? AND day BETWEEN ? AND ?",
@@ -462,7 +541,8 @@ def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[d
     # earliest strip day's own window reaches one day further back than WINDOW_DAYS alone.
     lector = Lector(conn, person_id, (start - timedelta(baselines.WINDOW_DAYS + 1)).isoformat(),
                      today_local.isoformat(), readiness.METRICS)
-    strip = []
+    con_anio = start.year != today_local.year
+    celdas = []
     present: set[str] = set()
     for i in range(_STRIP_DAYS):
         d = (start + timedelta(i)).isoformat()
@@ -476,9 +556,12 @@ def _turnos_strip(conn, person_id: int, today_local: date, t: T) -> tuple[list[d
         turno = t("shift.kind." + kind)
         label = (t("shifts.strip_cell", fecha=fecha, turno=turno, n=score) if score is not None
                  else t("shifts.strip_cell_sin_dato", fecha=fecha, turno=turno))
-        strip.append({"day": d, "band": kind, "score": score, "label": label})
+        celdas.append({"day": d, "band": kind, "score": score, "label": label})
+    semanas = [{"label": _strip_week_label(t, start + timedelta(w * 7), con_anio),
+                "celdas": celdas[w * 7:(w + 1) * 7]}
+               for w in range(_STRIP_WEEKS)]
     legend = [{"kind": k, "label": t("shift.kind." + k)} for k in _STRIP_KIND_ORDER if k in present]
-    return strip, legend
+    return semanas, legend
 
 
 @router.get("/shifts")
@@ -511,7 +594,7 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
         result_msg = t("shifts.undo_refused")
     today_local = comun._today_local(person)
     resumen = turnos_costo.resumen(conn, person_id, hoy=today_local)
-    strip, strip_legend = _turnos_strip(conn, person_id, today_local, t)
+    semanas, strip_legend = _turnos_strip(conn, person_id, today_local, t)
     defs = comun._defs(conn)
     filas = _turnos_filas(t, defs, resumen)
     # BODY-SHIFTS-REDUNDANT-EMPTY-TABLE-1: the hero card above already names the one reason there is
@@ -519,15 +602,24 @@ def shifts(request: Request, person_id: int = Depends(identity.current_person_id
     # repeat it. Drop the whole card when every row is empty; a partial row (at least one figure) is
     # informative on its own and keeps rendering exactly as before.
     costo_vacio = all(f["href"] is None for f in filas)
-    ultima = _turnos_ultima_ctx(t, defs, resumen)
+    ultima = _turnos_ultima_ctx(t, defs, resumen, today_local)
     # BODY-TURNO-FC-1: pure reads over the already-derived `turno_fc` table (two cheap SELECTs,
     # body/turno_fc.py's own estudio()) -- never a live recompute on this page render.
     pulso = _turno_fc_ctx(t, turno_fc.estudio(conn, person_id))
-    perfil_hrv = _perfil_hrv_ctx(t, resumen.get("perfil_hrv"), defs)
+    perfil_hrv_raw = resumen.get("perfil_hrv")
+    perfil_hrv = _perfil_hrv_ctx(t, perfil_hrv_raw, defs)
+    # BODY-REVISION-TURNOS-TARJETAS-1 ruling 3: the headline and the caption under it must come
+    # from the SAME computation -- when the HRV day-profile never returns to band, the headline
+    # says so instead of showing a day count (resumen's own, 5-metric, historical median) that the
+    # caption underneath would otherwise contradict.
+    patron_hrv = turnos_costo.frase_patron(perfil_hrv_raw, "hrv_last_night")
+    hero_no_vuelve = patron_hrv is not None and patron_hrv["kind"] == "no_vuelve"
+    hero_no_vuelve_offset = _perfil_offset_palabra(t, patron_hrv["peor"]) if hero_no_vuelve else None
     cuerpo_ctx = {"vistas": anatomia.contexto(t, "turnos", frozenset({"cerebro"})),
                   "caption": t("cuerpo.caption.turnos"), "recorte": "cabeza"}
     costo_ctx = {"hero_dias": resumen["dias_recuperacion"], "motivo": resumen["motivo"],
-                 "filas": filas, "costo_vacio": costo_vacio, "strip": strip, "strip_legend": strip_legend,
+                 "hero_no_vuelve": hero_no_vuelve, "hero_no_vuelve_offset": hero_no_vuelve_offset,
+                 "filas": filas, "costo_vacio": costo_vacio, "semanas": semanas, "strip_legend": strip_legend,
                  "ultima": ultima, "pulso": pulso, "perfil_hrv": perfil_hrv, "cuerpo": cuerpo_ctx}
     tiene_patron = patron_turnos.leer(conn, person_id) is not None
     # ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: the same _historial_filas call, made ONCE per

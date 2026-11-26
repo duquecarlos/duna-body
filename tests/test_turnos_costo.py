@@ -461,6 +461,80 @@ class HeroQuestionsTest(unittest.TestCase):
         self.assertEqual(hero.group(0).count("≈"), 1)  # the big figure, not repeated in the sentence below it
 
 
+class HeroNoVuelveTest(unittest.TestCase):
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 3: the headline and the caption under it come from
+    ONE computation. When HRV's own day-profile never returns to band, the headline says so
+    instead of showing a day count (the OTHER 4 metrics' own historical median) the caption would
+    otherwise contradict."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def _seed(self, conn, today: date) -> None:
+        """Three 2-night blocks: every metric but HRV recovers the day right after (so the hero
+        gets a day count), while HRV itself is pushed off-band for the whole block and every
+        post-day through the window (so its own day-profile never returns)."""
+        _fill_range(conn, 1, today - timedelta(140), today - timedelta(1), CONST)
+        ventana = turnos_costo.MODELO["ventana_post"]
+        for offset_days in (100, 60, 20):
+            inicio = today - timedelta(offset_days)
+            fin = inicio + timedelta(1)
+            d = inicio
+            while d <= fin:
+                _insert_shift(conn, 1, d.isoformat())
+                db.set_metric(conn, d.isoformat(), "hrv_last_night",
+                              CONST["hrv_last_night"] + OFF_DELTA["hrv_last_night"], "garmin", 1)
+                d += timedelta(1)
+            for i in range(1, ventana + 1):
+                day = fin + timedelta(i)
+                db.set_metric(conn, day.isoformat(), "hrv_last_night",
+                              CONST["hrv_last_night"] + OFF_DELTA["hrv_last_night"], "garmin", 1)
+
+    def test_fixture_actually_disagrees_before_the_fix(self):
+        """Proves the seeding reproduces finding 10's own disagreement: a day count AND a
+        never-returned HRV profile, from the same resumen() call."""
+        conn = self._reset_db("nv_fixture.db")
+        today = date.today()
+        self._seed(conn, today)
+        conn.commit()
+        resumen = turnos_costo.resumen(conn, 1, hoy=today)
+        self.assertIsNotNone(resumen["dias_recuperacion"])
+        patron = turnos_costo.frase_patron(resumen["perfil_hrv"], "hrv_last_night")
+        self.assertIsNotNone(patron)
+        self.assertEqual(patron["kind"], "no_vuelve")
+
+    def test_headline_says_not_back_yet_instead_of_a_contradicting_number_es(self):
+        conn = self._reset_db("nv_es.db")
+        today = date.today()
+        self._seed(conn, today)
+        conn.commit()
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        hero = re.search(r'<a class="card est"[^>]*>.*?</a>', r.text, re.S).group(0)
+        self.assertIn(_t("es", "shifts.hero_no_vuelve_fig"), hero)
+        self.assertNotIn('<span class="big">', hero)
+
+    def test_headline_says_not_back_yet_instead_of_a_contradicting_number_en(self):
+        conn = self._reset_db("nv_en.db")
+        today = date.today()
+        self._seed(conn, today)
+        db.set_language(conn, "en", 1)
+        conn.commit()
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        hero = re.search(r'<a class="card est"[^>]*>.*?</a>', r.text, re.S).group(0)
+        self.assertIn(_t("en", "shifts.hero_no_vuelve_fig"), hero)
+        self.assertNotIn('<span class="big">', hero)
+
+
 class StripBandsTest(unittest.TestCase):
     """BODY-TURNOS-COSTO-1-M fix e: every shift.kind gets its own class and word, a day without a
     shift reads 'none', a day without readiness shows an em dash, and every cell is labelled."""
@@ -502,6 +576,46 @@ class StripBandsTest(unittest.TestCase):
         self.assertIn('class="strip-cell none"', r.text)
         self.assertIn(_t("es", "shifts.sin_dato_corto"), r.text)  # trailing segment of every cell's label
         self.assertIn(">—</a>", r.text)
+
+
+class StripWeekLabelsTest(unittest.TestCase):
+    """BODY-REVISION-TURNOS-TARJETAS-1 ruling 4: the 8-week grid gets a header per week (its own
+    starting date), a label naming what the numbers are, and a caption saying what a cell is --
+    still 56 cells, still the existing 7-column .strip grid (no new horizontal scroll)."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def _reset_db(self, name: str):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / name
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        return conn
+
+    def test_eight_week_labels_and_caption_appear_once_per_week(self):
+        conn = self._reset_db("stripweeks.db")
+        today = date.today()
+        db.set_trabaja_turnos(conn, True, 1)
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        start = today - timedelta(55)
+        for w in range(8):
+            label = turnos._strip_week_label(T("es"), start + timedelta(w * 7),
+                                              con_anio=start.year != today.year)
+            self.assertIn(_esc(label), r.text)
+        self.assertIn(_t("es", "shifts.strip_medida"), r.text)
+        self.assertIn(_t("es", "shifts.strip_caption"), r.text)
+        cells = re.findall(r'<a class="strip-cell[^"]*"[^>]*>', r.text)
+        self.assertEqual(len(cells), 56)
+
+    def test_year_shown_only_when_the_range_crosses_one(self):
+        t = T("es")
+        same_year = turnos._strip_week_label(t, date(2026, 11, 3), con_anio=False)
+        crossing = turnos._strip_week_label(t, date(2025, 12, 29), con_anio=True)
+        self.assertNotIn("2026", same_year)
+        self.assertIn("2025", crossing)
 
 
 class ComoListsBlocksTest(unittest.TestCase):
