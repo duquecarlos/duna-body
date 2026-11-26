@@ -36105,3 +36105,81 @@ here.
 Merged as `05ee0d0f49665a5898ca22115283c07cf45d46a0`, base `main` at
 `b8558f148ba0209811b4f9c4e2a69d94f44a3e02`, tree `e79109fa35662859f5f15194ee2f7c088b7ba846` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-REVISION-GRAFICOS-FIGURA-1
+
+Four findings from BODY-REVISION-1-INV plus two 375px-pass items, under five binding rulings (one
+hero cap, no overlapping end labels, dates carry a year when it matters, one day count or each
+label says exactly what it counts, tap targets >=44px).
+
+**Finding 10 (axis).** `profile.py`'s `month_svg`/`window_svg` end-of-range labels now wrap
+through a new private `_wrap_label(label, slot)`, a deferred (function-local) `from .rutas import
+turnos` import that delegates to `turnos._perfil_wrap` -- ruling 2's "reuse, never copy," applied
+in the direction that actually works. The first attempt moved `_label_px`/`_perfil_wrap`/
+`_PERFIL_CHAR_W`/`_PERFIL_TICK_FONT` out of `turnos.py` into `profile.py`, which broke
+`tests/test_turnos_costo.py` (outside this slice's `touches`, caught by
+`test_guardia_parches.RouteModuleAttrReadGuardTest`) -- it reads these names as `turnos.*`
+directly in five assertions. `turnos.py` itself gained only a comment; its functions and
+constants stayed exactly where that other test expects them. New `EndLabelOverlapGuardTest`,
+`tests/test_profile.py` (3 cases): a too-wide month label wraps, a short one does not, a too-wide
+window-label wraps.
+
+**Finding 11a (since-date year).** Trends' "since <weekday>, <month day>" caption used
+`t.long_date` (no year); `tendencias.py`'s since-caption now calls `comun._short_date` instead,
+which carries one. New `test_since_caption_carries_a_year`, `tests/test_tendencias_todas.py`.
+
+**Finding 11b (two day counts).** The top-of-page day count (`db.days_with_data`'s count of
+distinct garmin-sourced `daily_metric` days) and the strength-chart racha count
+(`result["dias_historia"]`, `entreno_racha.py`'s calendar span since this person's first ever
+activity row, watch or manual) are genuinely different measures from different tables -- a span
+can include gaps a count does not see. Ruling 4's "each label says exactly what it counts" was
+chosen over unifying them, since forcing one function would misrepresent one of the two subjects.
+`trends.racha.sub` reworded in both languages to name its own subject (days since the first
+recorded activity) instead of claiming "all of your watch's history," which implied the same
+count as the top figure. `tests/test_tendencias_racha.py`'s pinning test renamed
+(`test_days_from_watch_history_sub_line` -> `test_days_since_first_activity_sub_line`) to match.
+
+**Finding 15 (hero fills the screen).** Shifts and Trends' `cuerpo_vista()` calls now pass
+`'hoy-figura'`, the same class Today's own body view already used -- ruling 1's "one hero cap,"
+no second CSS rule. New `test_body_view_carries_hoy_figura_cap`
+(`tests/test_tendencias_todas.py`) and `ShiftsHeroCapTest`
+(`tests/test_rendimiento_turnos.py`).
+
+**375px tap targets.** Día's workout link was a 58x20 inline `<a class="no-underline">` around
+just the activity name; it is now a single block link (`entreno-row`, `min-height:44px`) wrapping
+the whole row (name, detail, recovery, lesion) -- the "vinculado unida" note and its separar form
+stay outside the anchor, since a `<form>` cannot nest inside an `<a>`. The goal detail's two
+*linked* rows (`a.row.k.py-4`, to a target goal or an experiment) were 28-30px; they now also
+carry `row-tap` (`min-height:44px`); the plain, non-link rows sharing the same base classes
+(`div.row.k.py-4`) are untouched. New `EntrenoRowTapTargetTest`
+(`tests/test_mock_r2_hoy.py`) and `GoalDetailLinkedRowTapTargetTest`
+(`tests/test_goals_web.py`).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 26 sequential
+foreground/background chunks (the chunking plan this slice inherited, 10-12 modules per fast
+group, 5 for `test_garmin_*`/`test_host_*`/`test_mcp_*`), covering all 251 discovered modules with
+no overlap and no gap. One regression surfaced mid-gate (the `RouteModuleAttrReadGuardTest`
+failure from the first `turnos.py`/`profile.py` attempt above), fixed, and that chunk re-run in
+full, green. Every chunk green, zero failures, zero errors. Reconciled against an independent
+collect-only walk of the whole suite: **5888 tests** -- exactly BODY-SUENO-DETECTOR-1's own 5878
+plus the 10 new cases added here (3 + 2 + 1 + 2 + 2, by module above).
+
+**Customer bytes changed.** `trends.racha.sub` (es): "{dias} días de todo el historial de tu
+reloj. Cada barra es una semana de sesiones de fuerza." -> "{dias} días desde tu primera actividad
+registrada. Cada barra es una semana de sesiones de fuerza." `trends.racha.sub` (en): "{dias} days
+from your watch's full history. Each bar is a week of strength sessions." -> "{dias} days since
+your first recorded activity. Each bar is a week of strength sessions." Plus layout-only changes
+(no new strings): the Shifts/Trends hero cap, and the two tap-target reflows.
+ORCH-CARLOS-DELEGATES-TIER-1-1 explicitly authorised merging despite this ("Merge if green...
+list every changed string... so the orchestrator can measure them at 375px before any deploy. No
+deploy, no push.") -- merge proceeds; the strings above are listed for that 375px measurement.
+
+**Merge.** `git checkout main`; `git merge --no-ff feat/body-revision-graficos-figura-1`; branch
+deleted. No deploy, no push.
+
+**Open followups.** None raised beyond what ORCH-CARLOS-DELEGATES-TIER-1-1 itself asked for (the
+orchestrator's own 375px measurement before any deploy).
+
+Merged as `6220fdca9a506851cf54c894e65e86cd93b51a41`, base `main` at
+`c06eef7a91b93329e4b0c51673d049f67786a964`, tree `e1d29daee54225062a622f9b2570ea7db6385bb6` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
