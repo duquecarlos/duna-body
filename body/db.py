@@ -1391,6 +1391,21 @@ METRIC_DEFS += [
     # go up or down is the person's own goal (a goal row), never this metric's own direction.
     ("body_weight_kg", "Weight", "kg", "neutral", "measured", "self"),
     ("waist_cm", "Waist", "cm", "neutral", "measured", "self"),
+    # BODY-MEDIDA-CINTA-1 (ORCH-CARLOS-DELEGATES-TIER-1-1, Carlos relayed by the desk 25 Nov):
+    # tape-measured circumferences, the same template as body_weight_kg/waist_cm above -- 'neutral'
+    # for all eleven, since whether an arm or a waist should grow is the person's own goal, never
+    # assumed here. A scale gives weight only; these are read with a tape every 2-4 weeks.
+    ("arm_relaxed_left_cm", "Left arm, relaxed", "cm", "neutral", "measured", "self"),
+    ("arm_relaxed_right_cm", "Right arm, relaxed", "cm", "neutral", "measured", "self"),
+    ("arm_flexed_left_cm", "Left arm, flexed", "cm", "neutral", "measured", "self"),
+    ("arm_flexed_right_cm", "Right arm, flexed", "cm", "neutral", "measured", "self"),
+    ("chest_cm", "Chest", "cm", "neutral", "measured", "self"),
+    ("hips_cm", "Hips", "cm", "neutral", "measured", "self"),
+    ("thigh_left_cm", "Left thigh", "cm", "neutral", "measured", "self"),
+    ("thigh_right_cm", "Right thigh", "cm", "neutral", "measured", "self"),
+    ("calf_left_cm", "Left calf", "cm", "neutral", "measured", "self"),
+    ("calf_right_cm", "Right calf", "cm", "neutral", "measured", "self"),
+    ("neck_cm", "Neck", "cm", "neutral", "measured", "self"),
     # BODY-COMIDA-1-M fix 1: calories lead the intake catalogue -- this declaration order IS the
     # display order (db.INGESTA_METRIC_KEYS below reads it off, never a second hand-typed list),
     # so a reader's meal amounts show calories first, not whatever order the keys were added in.
@@ -1462,6 +1477,18 @@ CHECKIN_METRIC_KEYS = ("mood", "energy", "stress_felt")
 RANGOS_MEDIDA_PERSONAL = {
     "body_weight_kg": (20, 300),
     "waist_cm": (40, 200),
+    # BODY-MEDIDA-CINTA-1 ruling 1: a typo guard, not a judgment -- wide enough for any adult limb.
+    "arm_relaxed_left_cm": (15, 70),
+    "arm_relaxed_right_cm": (15, 70),
+    "arm_flexed_left_cm": (15, 70),
+    "arm_flexed_right_cm": (15, 70),
+    "chest_cm": (50, 200),
+    "hips_cm": (50, 200),
+    "thigh_left_cm": (25, 110),
+    "thigh_right_cm": (25, 110),
+    "calf_left_cm": (18, 70),
+    "calf_right_cm": (18, 70),
+    "neck_cm": (20, 70),
     # BODY-AGUJETAS-1 ruling 2: 0-5 inclusive for every soreness key.
     "soreness_legs": (0, 5),
     "soreness_glutes": (0, 5),
@@ -1513,6 +1540,19 @@ def kind_excluye_del_rango(kind: str) -> bool:
 DECIMALES_MEDIDA = {
     "body_weight_kg": 1,
     "waist_cm": 1,
+    # BODY-MEDIDA-CINTA-1 ruling 1: the same one-decimal precision as waist_cm -- a tape reading
+    # moves in tenths too.
+    "arm_relaxed_left_cm": 1,
+    "arm_relaxed_right_cm": 1,
+    "arm_flexed_left_cm": 1,
+    "arm_flexed_right_cm": 1,
+    "chest_cm": 1,
+    "hips_cm": 1,
+    "thigh_left_cm": 1,
+    "thigh_right_cm": 1,
+    "calf_left_cm": 1,
+    "calf_right_cm": 1,
+    "neck_cm": 1,
 }
 
 DEFAULT_PERSON_ID = 1  # the local person's id; nowhere outside this module (local_person_id() is the seam)
