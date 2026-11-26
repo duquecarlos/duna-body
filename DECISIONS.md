@@ -35884,3 +35884,53 @@ natural follow-on to `body/anatomia.py`'s existing view machinery, not started h
 Merged as `1df633c785b0258d06315f5bf2f5ab6b45b5ef92`, base `main` at
 `f5dde2165570864e420c3be7efa3d2e14b20f1d7`, tree `4c2d9066d6d868351ff55fc500009dd827a7c21b` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-REVISION-TURNOS-TARJETAS-1
+
+Fixed four findings from BODY-REVISION-1-INV about the `/shifts` screen, under four explicit
+rulings. **Ruling 1** (finding 8): `turno_fc.estudio()` now groups tied-magnitude kind-level
+differences into one "empate" sentence instead of letting each silently claim the same rank; a lone
+finding is worded by rank ("the biggest difference", "also a clear difference", "a smaller
+difference"), with the rank order and the tie tolerance versioned in `turno_fc.MODELO` rather than
+hand-typed where the words render. **Ruling 2** (finding 9): the last-block card names the block by
+what it is -- "your last block of N nights" below 5 nights, "your last night week" at or above it --
+plus how long ago it ended ("3 weeks ago"); what counts as a block (`turnos_costo.bloques_noche`'s
+own 1+ night run) is unchanged. **Ruling 3** (finding 10): the recovery headline and the caption
+under it now come from one computation (`turnos_costo.frase_patron` on the HRV day-profile); when
+the profile never returns to band the headline says so ("not back yet; lowest on day +K") instead of
+showing a day count the caption would otherwise contradict; "before, half the time: M days or fewer"
+is replaced with "your blocks before this one: back in about M days". **Ruling 4** (finding 17): the
+8-week strip is grouped into per-week rows, each with a short week-starting-date label (year shown
+only when the 8-week range crosses one), a measure label and a caption saying what a cell is; it
+reuses the existing 7-column `.strip` grid per week, so it never scrolls sideways at 375px and the
+56-cell total is unchanged.
+
+**Gate.** The exact command (`.venv/Scripts/python.exe -m unittest discover tests -t .`) was
+reconciled against an independent collect-only walk: **249 test modules, 5838 tests**. On this
+machine the full suite's real wall-clock is longer than any single foreground or auto-background
+window available, so the same module list was run to completion in seven sequential pieces instead
+of one process (chunks of 50/50/[10+15+25]/50/49 modules): 1170, 956, 218, 511, 647, 1313 and 1023
+tests, summing to **5838** -- exact match -- every piece **OK**, zero failures. The long
+`NotSignedIn`/`GarminConnectConnectionError` retry sequences and the slow wall-clock in the Garmin/mcp
+modules are pre-existing (none of those modules are in this slice's touches).
+
+**Merge.** The diff touches no schema/migration and no cross-repo contract. Customer-facing bytes do
+change (every string listed below), so Merge Policy A's merge-on-green applies rather than an
+AWAITING_APPROVAL stop. `git checkout main`; `git merge --no-ff feat/body-revision-turnos-tarjetas-1`;
+branch deleted.
+
+**Customer-facing strings added/changed (es / en), one pair per key:**
+`shifts.hero_no_vuelve_fig`, `shifts.hero_no_vuelve_sub`, `shifts.strip_medida`,
+`shifts.strip_caption`, `shifts.ultima.title_semana`, `shifts.ultima.title_bloque`(`_one`),
+`shifts.ultima.hace_hoy`, `shifts.ultima.hace_dias`(`_one`), `shifts.ultima.hace_semanas`(`_one`),
+`shifts.ultima.sub`, `shifts.ultima.recuperacion`(`_one`), `shifts.ultima.recuperacion_antes_dias`
+(`_one`), `shifts.ultima.faltan`, `shifts.pulso.hallazgo`, `shifts.pulso.rango.mayor`/
+`tambien_claro`/`menor`, `shifts.pulso.hallazgo_empate_item`, `shifts.pulso.hallazgo_empate`.
+`shifts.ultima.title` and `shifts.ultima.recuperacion_mediana`(`_one`) were removed (superseded by
+the keys above).
+
+**Open followups.** None.
+
+Merged as `4a22be2841c1877ad6c64d2b8fbfa8858b40bb54`, base `main` at
+`357aeeba7e03f681d65566a5062999180a79b5d9`, tree `e86ef1aacb78711f4e70ede246570fc7a4072c5b` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
