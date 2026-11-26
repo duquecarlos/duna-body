@@ -220,7 +220,12 @@ _PERFIL_CHAR_W = 0.6 * _PERFIL_TICK_FONT  # approx glyph width (px) at the tick 
                            # approximation from character count, since real glyph metrics are not
                            # available server-side; generous enough that two labels' approximate
                            # boxes never touch (restated from BODY-TURNOS-PERFIL-DIA-1-M's own 0.6em
-                           # estimate, now against the floor font-size instead of the old 10px one)
+                           # estimate, now against the floor font-size instead of the old 10px one).
+                           # Reused, not copied, by profile.py's own end-of-range labels
+                           # (BODY-REVISION-GRAFICOS-FIGURA-1 finding 10) through a deferred import
+                           # there -- this module cannot import profile.py at top level, since
+                           # profile.py -> (nothing) but comun.py -> profile.py and this module ->
+                           # comun.py, so the reverse direction would be circular.
 _PERFIL_LABEL_GAP = 4.0    # minimum clear gap kept between two adjacent x-axis label boxes
 _PERFIL_GUTTER_PAD = 6.0   # clearance between the widest y-tick text and the plot area
 _PERFIL_EDGE_PAD = 2.0     # inside the viewBox's own left/right edge

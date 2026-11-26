@@ -232,6 +232,22 @@ class FormTapTargetCssTest(unittest.TestCase):
         self.assertIn(".field{display:block;width:100%;min-height:44px", css)
 
 
+class GoalDetailLinkedRowTapTargetTest(unittest.TestCase):
+    """BODY-REVISION-GRAFICOS-FIGURA-1 ruling 5: the goal detail's linked goal/experiment rows
+    (a.row.k.py-4) were a 28-30px tap target -- `row-tap` carries the 44px floor, added only to
+    the two <a> rows (never the plain, non-link rows that share the same base classes)."""
+
+    def test_css_row_tap_is_44px(self):
+        css = (_STATIC_DIR / "body.css").read_text(encoding="utf-8")
+        self.assertIn(".row-tap{min-height:44px}", css)
+
+    def test_linked_target_and_experiment_rows_carry_row_tap(self):
+        tpl = (_STATIC_DIR.parent / "templates" / "goal.html").read_text(encoding="utf-8")
+        self.assertIn('<a class="row k py-4 row-tap" href="/goals/{{ ta.id }}">', tpl)
+        self.assertIn('<a class="row k py-4 row-tap" href="/experiments/{{ e.id }}">', tpl)
+        self.assertNotIn('<div class="row k py-4 row-tap">', tpl)  # non-link rows stay as they were
+
+
 class HouseholdGoalDetailTest(unittest.TestCase):
     def test_member_check_shown(self):
         conn = _reset_db(self)

@@ -118,9 +118,15 @@ class CardWithFloorTest(_PageTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("cerrando la brecha", r.text)
 
-    def test_days_from_watch_history_sub_line(self):
+    def test_days_since_first_activity_sub_line(self):
+        """BODY-REVISION-GRAFICOS-FIGURA-1 finding 11b: the wording names exactly what
+        dias_historia counts (a calendar span since the first recorded activity), never the
+        "all of your watch's history" claim that implied the SAME count as Trends' top "days
+        with data" -- the two are honestly different measures (one's a span that can include
+        gaps, the other a count of days actually synced), so they say so instead of matching by
+        coincidence or never matching at all."""
         r = self.client.get("/trends")
-        self.assertIn(f"{self.resultado['dias_historia']} días de todo el historial", r.text)
+        self.assertIn(f"{self.resultado['dias_historia']} días desde tu primera actividad registrada", r.text)
 
     def test_floor_note_present_with_the_floor_number(self):
         r = self.client.get("/trends")

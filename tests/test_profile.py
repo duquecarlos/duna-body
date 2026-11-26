@@ -57,5 +57,44 @@ class ProfileTest(unittest.TestCase):
         self.assertIn("c-viaje", svg)
 
 
+class EndLabelOverlapGuardTest(unittest.TestCase):
+    """BODY-REVISION-GRAFICOS-FIGURA-1 finding 10: window_svg/month_svg's end-of-range labels
+    wrap instead of ever overlapping -- the same guard (turnos._perfil_wrap, reached through
+    profile._wrap_label's own deferred import) turnos.py's perfil chart already used, reused
+    here rather than copied."""
+
+    def test_month_svg_wraps_a_label_too_wide_for_its_half(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "wrap.db")
+        db.init(conn)
+        start = date(2026, 1, 1)
+        for i in range(90):
+            db.set_metric(conn, (start + timedelta(i)).isoformat(), "sleep_minutes", 420, "garmin", 1)
+        conn.commit()
+        p = profile.metric_profile(conn, "sleep_minutes", person_id=1)
+        svg = profile.month_svg(p, etiqueta_mes=lambda m: "Un mes con un nombre muy largo")
+        self.assertIn("<br>", svg)
+
+    def test_month_svg_does_not_wrap_a_short_label(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "nowrap.db")
+        db.init(conn)
+        start = date(2026, 1, 1)
+        for i in range(90):
+            db.set_metric(conn, (start + timedelta(i)).isoformat(), "sleep_minutes", 420, "garmin", 1)
+        conn.commit()
+        p = profile.metric_profile(conn, "sleep_minutes", person_id=1)
+        svg = profile.month_svg(p, etiqueta_mes=lambda m: m)
+        self.assertNotIn("<br>", svg)
+
+    def test_window_svg_wraps_a_label_too_wide_for_its_half(self):
+        conn = open_conn(self, Path(tempfile.mkdtemp()) / "wwrap.db")
+        db.init(conn)
+        for i in range(20):
+            db.set_metric(conn, (date(2026, 3, 1) + timedelta(i)).isoformat(), "resting_hr", 50, "garmin", 1)
+        conn.commit()
+        w = profile.window(conn, "resting_hr", date(2026, 3, 11), date(2026, 3, 20), 1)
+        svg = profile.window_svg(w, 49, 52, etiqueta_dia=lambda d: "Un día con una etiqueta muy larga")
+        self.assertIn("<br>", svg)
+
+
 if __name__ == "__main__":
     unittest.main()
