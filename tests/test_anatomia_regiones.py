@@ -172,6 +172,44 @@ class RegionesEstadoPrecedenceTest(unittest.TestCase):
         self.assertEqual(got, {})
 
 
+class RegionesEstadoModeloSeamTest(unittest.TestCase):
+    """BODY-CUERPO-ESTADO-MUSCULO-1 ruling 6: the widened seam -- estados_modelo wins over
+    entrenado/pendiente, loses to limitada, never touches a region it has no entry for, and None
+    (the default) keeps regiones_estado byte-for-byte what it was before this seam existed."""
+
+    def test_no_model_given_is_byte_for_byte_the_old_behaviour(self):
+        sin = anatomia.regiones_estado(frozenset({"pecho"}), frozenset(), frozenset({"abdomen"}))
+        con_none = anatomia.regiones_estado(frozenset({"pecho"}), frozenset(), frozenset({"abdomen"}),
+                                             estados_modelo=None)
+        self.assertEqual(sin, con_none)
+
+    def test_model_state_wins_over_entrenado(self):
+        got = anatomia.regiones_estado(grupos_lit=frozenset({"pecho"}),
+                                        estados_modelo={"pecho": "subentrenado"})
+        self.assertEqual(got, {"pecho": "subentrenado"})
+
+    def test_model_state_wins_over_pendiente(self):
+        got = anatomia.regiones_estado(grupos_pendientes=frozenset({"gluteos"}),
+                                        estados_modelo={"gluteos": "en_rango"})
+        self.assertEqual(got, {"gluteos": "en_rango"})
+
+    def test_limitada_still_wins_over_the_model(self):
+        got = anatomia.regiones_estado(grupos_limitados=frozenset({"cuadriceps"}),
+                                        estados_modelo={"cuadriceps": "sobrecargado"})
+        self.assertEqual(got, {"cuadriceps": "limitada"})
+
+    def test_organs_keep_entrenado_and_pendiente_when_the_model_has_no_entry(self):
+        got = anatomia.regiones_estado(grupos_lit=frozenset({"corazon"}),
+                                        grupos_pendientes=frozenset({"cerebro"}),
+                                        estados_modelo={"pecho": "sin_datos"})
+        self.assertEqual(got["corazon"], "entrenado")
+        self.assertEqual(got["cerebro"], "pendiente")
+
+    def test_a_region_absent_from_every_set_and_the_model_is_not_reported(self):
+        got = anatomia.regiones_estado(estados_modelo={})
+        self.assertEqual(got, {})
+
+
 class ContextoRegionesSeamTest(unittest.TestCase):
     """Ruling 3: contexto()'s own `regiones` key -- the whole screen's state, unfiltered by any
     view's own permitidos, the same dict on every view in the list, equal to what the ellipse
@@ -209,6 +247,44 @@ class ContextoRegionesSeamTest(unittest.TestCase):
         espalda = next(v for v in ctx if v["id"] == "espalda")
         self.assertEqual(len(musculos["glow"]), 2)
         self.assertEqual(len(espalda["glow"]), 2)
+
+
+class ObjetivoRegionesTest(unittest.TestCase):
+    """BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2: the plan's own SEPARATE target layer -- every region
+    a planned categoria's own CATEGORIA_GRUPOS maps to, REGIONES' own order, regardless of
+    whether it is already trained. Never [] -- None for no plan, or one that maps to nothing."""
+
+    def test_no_plan_gives_null(self):
+        self.assertIsNone(anatomia.objetivo_regiones(None))
+
+    def test_categoria_mapping_to_nothing_gives_null(self):
+        self.assertIsNone(anatomia.objetivo_regiones(["cardio"]))
+
+    def test_categoria_maps_to_its_regions_in_regiones_order(self):
+        self.assertEqual(anatomia.objetivo_regiones(["pierna"]), ["cuadriceps", "isquios"])
+
+    def test_an_already_trained_region_stays_a_target(self):
+        # objetivo depends only on what is PLANNED -- it carries no "already trained" input at
+        # all, so a region that is both planned and trained is still a target, by construction.
+        self.assertEqual(anatomia.objetivo_regiones(["hombro"]), ["hombros"])
+
+
+class ContextoVistasUnaffectedByModeloTest(unittest.TestCase):
+    """Ruling 6's last sentence: `estados_modelo` only ever changes the hidden `regiones` map --
+    the per-view glow/limitada/pendiente lists, labels, alts and every other 2D field Hoy's own
+    `_cuerpo_hoy_ctx` builds its vistas from are identical with or without it."""
+
+    def test_every_field_but_regiones_is_identical_with_and_without_a_model(self):
+        grupos_lit = anatomia.CATEGORIA_GRUPOS["pierna"]
+        grupos_pendientes = anatomia.CATEGORIA_GRUPOS["gluteo"]
+        sin_modelo = anatomia.contexto(_T(), "hoy", grupos_lit, frozenset(), grupos_pendientes)
+        con_modelo = anatomia.contexto(_T(), "hoy", grupos_lit, frozenset(), grupos_pendientes,
+                                        estados_modelo={"cuadriceps": "sobrecargado"})
+        self.assertEqual(len(sin_modelo), len(con_modelo))
+        for a, b in zip(sin_modelo, con_modelo):
+            for campo in ("id", "imagen", "glow", "limitada", "pendiente", "nitida", "label", "alt"):
+                self.assertEqual(a[campo], b[campo], campo)
+        self.assertNotEqual(sin_modelo[0]["regiones"], con_modelo[0]["regiones"])
 
 
 if __name__ == "__main__":

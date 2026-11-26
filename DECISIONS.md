@@ -35934,3 +35934,73 @@ the keys above).
 Merged as `4a22be2841c1877ad6c64d2b8fbfa8858b40bb54`, base `main` at
 `357aeeba7e03f681d65566a5062999180a79b5d9`, tree `e86ef1aacb78711f4e70ede246570fc7a4072c5b` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-CUERPO-ESTADO-MUSCULO-1 / .W / .W2
+
+A versioned per-region muscle-state model for the hidden 3D body view, built and gated across three
+dispatches on one branch. `body/musculo.py` (new): `compute(conn, day, person_id)` -- an
+effective-sets-per-region model, as-of a given day, with five states in precedence order
+(`sin_datos`/`sobrecargado`/`recuperando`/`subentrenado`/`en_rango`), a 7-day acute window judged
+against a 28-day weekly baseline, and `ACTIVIDAD_GRUPOS` so a watch activity with no logged sets of
+its own still counts toward a region. `body/anatomia.py` widens its existing `regiones_estado()`/
+`contexto()` with an optional `estados_modelo` kwarg: omitted, both are byte-for-byte unchanged;
+given, the model wins over `entrenado`/`pendiente` but still loses to an open `limitada` zona.
+`etiquetas_estado3d()` gains the model's five tap words and corrects the pre-existing "entrenado"
+copy from "this week" to "today" (what it has always actually measured). `body/rutas/hoy.py`
+(`_cuerpo_hoy_ctx`) computes `musculo.compute()` for today and threads it through as
+`estados_modelo` -- the only thing this touches is the hidden 3D view's own `regiones` map; every
+2D glow/limitada/pendiente list, caption and pixel on the visible screens is untouched, and
+`CUERPO3D_VISIBLE` stays `False` throughout.
+
+The second layer, `.W`: `anatomia.objetivo_regiones(categorias_planeadas)` -- today's plan, mapped
+through `CATEGORIA_GRUPOS` into `REGIONES`' own order, independent of what is already trained
+(`None`, never `[]`, with no plan or a plan that maps to nothing). `_cuerpo3d_ctx` gains `objetivo`
+from the same `categorias_planeadas` `_cuerpo_hoy_ctx` already reads (no second database read) --
+state and target are two layers that never overwrite each other (ruling 2). The template
+(`_cuerpo_vista.html`) carries it as a fourth flat blob, `cuerpo3d-objetivo`, beside
+`cuerpo3d-regiones`; null on an empty day, never a bare `"[]"`.
+
+`.W` also restored the three reds the inherited commit (3c3ff21) had left in `test_avatar3d.py`
+(`etiquetas_estado3d`'s nine words, the embedded `regiones` blob checked against `musculo.compute`
+itself rather than hard-coded, and the no-training/no-plan case renamed to what it now actually
+asserts: `sin_datos` for every muscle, `objetivo` null), and added `ObjetivoLayerTest` (a planned
+muscle that is also recovering shows both layers; an open lesion zona stays `limitada` while still a
+plan target) and `test_anatomia_regiones.py`'s `ObjetivoRegionesTest` (null for no plan and for a
+categoria mapping to nothing, `REGIONES` order, an already-trained region still a target since
+`objetivo` never reads what is trained).
+
+`.W2` is the gate and the merge on top of that finished, committed work: nothing in 3c3ff21 or
+2d031f2 was touched or rewritten.
+
+**Gate.** The exact command (`.venv/Scripts/python.exe -m unittest discover tests -t .`) was
+reconciled against an independent collect-only walk over the same 250 test modules: **5866 tests**
+both ways -- exact match. The full suite's real wall-clock exceeds any single foreground or
+auto-background window on this machine, so the same module list ran to completion in 28 sequential
+chunks (10 modules each, narrowed to 5 for the `test_garmin_*` and `test_host_*` clusters), each
+chunk run in the foreground (two chunks ran long enough to be moved to the background by the
+harness mid-run; both were read to completion before the next chunk started, never polled past
+completion). Per-chunk counts: 220, 195, 192, 313, 263, 47, 208, 259, 62, 131, 70, 144, 238, 216,
+215, 199, 270, 273, 233, 227, 350, 294, 208, 153, 226, 287, 210, 163 -- summing to **5866**, every
+chunk **OK**, zero failures, zero errors (one chunk carried one pre-existing `expectedFailure` and
+one pre-existing `skipped`, both already accounted for by `OK`). `test_musculo.py` and
+`test_anatomia_regiones.py` ran inside this sweep and are green. The printed `NotSignedIn`/
+`GarminConnectConnectionError`/thread-traceback lines in several chunks are pre-existing simulated
+Garmin-failure test fixtures (invented demo data, counts and dates only), not gate noise introduced
+here.
+
+**Merge.** The diff touches no schema or migration and no cross-repo contract. Customer-facing
+bytes do change (the i18n strings below), but the approval for this dispatch names exactly this:
+"no new design, no schema, no Tier 1 path; the 3D view stays hidden" -- the 3D view that carries
+these strings is unreachable with `CUERPO3D_VISIBLE` at its unchanged default of `False`, and the
+approval authorises merging on green rather than stopping at AWAITING_APPROVAL. `git checkout main`;
+`git merge --no-ff feat/body-cuerpo-estado-musculo-1`; branch deleted.
+
+**Customer-facing strings added/changed (es / en), one pair per key, all under the hidden 3D view:**
+`cuerpo.estado3d.entrenado` corrected ("entrenado esta semana"/"trained this week" ->
+"entrenado hoy"/"trained today"); five new keys added: `cuerpo.estado3d.sin_datos`,
+`cuerpo.estado3d.subentrenado`, `cuerpo.estado3d.en_rango`, `cuerpo.estado3d.sobrecargado`,
+`cuerpo.estado3d.recuperando`.
+
+**Open followups.** BODY-CUERPO-ESTADO-REGIONES-AMPLIAR-1 (widen region coverage), 
+BODY-CUERPO-ESTADO-OTRAS-CAPAS-1 (further model layers beyond state/objetivo), BODY-CUERPO-SPIN-HOY-1
+(draw `objetivo` as an outline on Hoy once the 3D view ships) -- none started here.

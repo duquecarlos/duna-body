@@ -8,6 +8,7 @@ import json
 import re
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,7 +16,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import anatomia, config, db, identity, seguridad, web
+from body import anatomia, config, db, garmin_adapter, identity, seguridad, web
 from body.rutas import comun, hoy as hoy_rutas
 
 client = TestClient(web.app, follow_redirects=False)
@@ -119,7 +120,9 @@ class EtiquetasTest(unittest.TestCase):
         for lang in ("es", "en"):
             t = T(lang)
             textos = anatomia.etiquetas_estado3d(t)
-            self.assertEqual(set(textos), {"entrenado", "pendiente", "limitada", "sin_registro"})
+            self.assertEqual(set(textos), {"entrenado", "pendiente", "limitada", "sin_registro",
+                                            "sin_datos", "subentrenado", "en_rango", "sobrecargado",
+                                            "recuperando"})
             for estado, texto in textos.items():
                 self.assertTrue(texto, estado)
 
@@ -195,6 +198,29 @@ def _bloque_json(html: str, clase: str):
     return json.loads(m.group(1)) if m else None
 
 
+def _actividad_con_set(conn, person_id: int, source_id: str, day: str, categoria: str) -> None:
+    """One strength activity on `day` with one active set of `categoria` -- the same shape
+    tests/test_musculo.py's own _actividad_con_sets uses, reproduced here since neither test
+    module imports the other."""
+    conn.execute(
+        "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+        "VALUES (?, ?, ?, ?, 'strength_training', NULL, 'garmin')",
+        (person_id, source_id, day, f"{day}T07:00:00"))
+    conn.commit()
+    db.save_exercise_sets(conn, person_id, "garmin", source_id, [garmin_adapter.ExerciseSet(
+        set_type="active", category=categoria, exercise="press", reps=8.0, weight_value=50.0,
+        weight_unit="kg", duration_s=30.0, start_local=f"{day}T07:00:00")])
+    conn.commit()
+
+
+def _plan_hoy(conn, person_id: int, day: str, categoria: str) -> None:
+    conn.execute(
+        "INSERT INTO plan (person_id, day, title, status, ejercicios_json) VALUES (?, ?, 'Plan', "
+        "'accepted', ?)",
+        (person_id, day, json.dumps([{"ejercicio": "x", "series": 3, "categoria": categoria}])))
+    conn.commit()
+
+
 class Cuerpo3dJsonRoundtripsTest(unittest.TestCase):
     """Ruling 5: the inlined `regiones` blob round-trips -- what the template embedded is exactly
     what `anatomia.regiones_estado` computed, never a second, divergent read. Three flat blobs,
@@ -207,11 +233,12 @@ class Cuerpo3dJsonRoundtripsTest(unittest.TestCase):
     def test_embedded_json_matches_the_screens_own_regiones_map(self):
         pid = _mk_person(self.conn)
         _algun_dato_hoy(self.conn, pid)
-        from body import fechas
+        from body import fechas, musculo
+        today_local = fechas.hoy_local(db.person(self.conn, pid))
         self.conn.execute(
             "INSERT INTO plan (person_id, day, title, status, ejercicios_json) VALUES (?, ?, 'Upper B', "
             "'accepted', ?)",
-            (pid, fechas.hoy_local(db.person(self.conn, pid)).isoformat(),
+            (pid, today_local.isoformat(),
              json.dumps([{"ejercicio": "press militar", "series": 3, "categoria": "hombro"}])))
         self.conn.commit()
         _use(pid)
@@ -219,27 +246,82 @@ class Cuerpo3dJsonRoundtripsTest(unittest.TestCase):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
         regiones = _bloque_json(r.text, "cuerpo3d-regiones")
+        objetivo = _bloque_json(r.text, "cuerpo3d-objetivo")
         nombres = _bloque_json(r.text, "cuerpo3d-nombres")
         estados_texto = _bloque_json(r.text, "cuerpo3d-estados-texto")
-        self.assertIsNotNone(regiones)
-        self.assertEqual(regiones.get("hombros"), "pendiente")
+        estados_modelo = {clave: estado.estado for clave, estado in
+                           musculo.compute(self.conn, today_local.isoformat(), pid).items()}
+        self.assertEqual(regiones, anatomia.regiones_estado(estados_modelo=estados_modelo))
+        self.assertIn("hombros", objetivo)
         self.assertEqual(set(nombres), {rg["clave"] for rg in anatomia.REGIONES})
-        self.assertEqual(set(estados_texto), {"entrenado", "pendiente", "limitada", "sin_registro"})
+        self.assertEqual(set(estados_texto), {"entrenado", "pendiente", "limitada", "sin_registro",
+                                                "sin_datos", "subentrenado", "en_rango", "sobrecargado",
+                                                "recuperando"})
 
-    def test_no_training_no_plan_no_lesion_renders_regiones_as_null_not_an_empty_object(self):
-        # A day with nothing logged, planned or recovering -- regiones_estado() returns {}, and
-        # the template must never emit the literal "{}" (or "}}") into the page (the exact defect
-        # this slice introduced and fixed, caught by tests/test_estados_vacios.py's own sweep).
+    def test_no_training_no_plan_no_lesion_renders_regiones_as_sin_datos_for_every_muscle(self):
+        # A day with nothing logged, planned or recovering -- before BODY-CUERPO-ESTADO-MUSCULO-1
+        # regiones_estado() returned {} here, and the template emitted the literal "{}" (the exact
+        # defect this slice introduced and fixed, caught by tests/test_estados_vacios.py's own
+        # sweep). Now the model's own `estados_modelo` entry gives every MUSCLE region "sin_datos"
+        # (no organ key, organs are not this model's) -- so what the template must never leak on
+        # this same empty day is `objetivo`'s own emptiness, a bare "[]", never the regiones one.
         pid = _mk_person(self.conn)
         _algun_dato_hoy(self.conn, pid)
         _use(pid)
         with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
             r = client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertIsNone(_bloque_json(r.text, "cuerpo3d-regiones"))
+        regiones = _bloque_json(r.text, "cuerpo3d-regiones")
+        muscle_claves = {rg["clave"] for rg in anatomia.REGIONES if rg["tipo"] == "musculo"}
+        self.assertEqual(set(regiones), muscle_claves)
+        for estado in regiones.values():
+            self.assertEqual(estado, "sin_datos")
+        self.assertIsNone(_bloque_json(r.text, "cuerpo3d-objetivo"))
         self.assertNotIn("{}", r.text)
         self.assertNotIn("}}", r.text)
         self.assertNotIn("[]", r.text)
+
+
+class ObjetivoLayerTest(unittest.TestCase):
+    """BODY-CUERPO-ESTADO-MUSCULO-1 ruling 5: `objetivo` (the plan's own target layer) and
+    `regiones` (the model's own state layer) never collapse into one word -- each names the same
+    muscle for its own reason, and both can be true of it at once."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+
+    def test_a_planned_muscle_that_is_also_recovering_shows_both_layers(self):
+        from body import fechas
+        pid = _mk_person(self.conn)
+        _algun_dato_hoy(self.conn, pid)
+        today = fechas.hoy_local(db.person(self.conn, pid))
+        _actividad_con_set(self.conn, pid, "a1", (today - timedelta(1)).isoformat(), "hombro")
+        _plan_hoy(self.conn, pid, today.isoformat(), "hombro")
+        _use(pid)
+        with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
+            r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        regiones = _bloque_json(r.text, "cuerpo3d-regiones")
+        objetivo = _bloque_json(r.text, "cuerpo3d-objetivo")
+        self.assertEqual(regiones.get("hombros"), "recuperando")
+        self.assertIn("hombros", objetivo)
+
+    def test_an_open_lesion_zona_stays_limitada_while_still_a_plan_target(self):
+        from body import fechas
+        pid = _mk_person(self.conn)
+        _algun_dato_hoy(self.conn, pid)
+        today = fechas.hoy_local(db.person(self.conn, pid))
+        db.crear_periodo(self.conn, pid, "lesion", today.isoformat(), zonas=["hombro"])
+        self.conn.commit()
+        _plan_hoy(self.conn, pid, today.isoformat(), "hombro")
+        _use(pid)
+        with patch.object(hoy_rutas, "CUERPO3D_VISIBLE", True):
+            r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        regiones = _bloque_json(r.text, "cuerpo3d-regiones")
+        objetivo = _bloque_json(r.text, "cuerpo3d-objetivo")
+        self.assertEqual(regiones.get("hombros"), "limitada")
+        self.assertIn("hombros", objetivo)
 
 
 class I18nKeysExistTest(unittest.TestCase):

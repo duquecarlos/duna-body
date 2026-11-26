@@ -139,17 +139,25 @@ def _alt(t: T, pantalla: str, vista_id: str) -> str:
 
 def regiones_estado(grupos_lit: frozenset[str] = frozenset(),
                      grupos_limitados: frozenset[str] = frozenset(),
-                     grupos_pendientes: frozenset[str] = frozenset()) -> dict[str, str]:
+                     grupos_pendientes: frozenset[str] = frozenset(),
+                     estados_modelo: dict[str, str] | None = None) -> dict[str, str]:
     """BODY-AVATAR-3D-REGIONES-1 ruling 3 (the seam): REGIONES' own order, one state per region,
     built from the SAME three sets contexto() filters per view -- never a separate read, so a 2D
     view and a 3D view (or anything else) can never disagree. Only a region that has a state is a
     key at all. Precedence limitada > entrenado > pendiente (an injury is what the person most
-    needs to see), never a list of states."""
+    needs to see), never a list of states.
+    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 6 (the widened seam): `estados_modelo`, when given, maps a
+    region to body.musculo.compute's own state word; it wins over entrenado/pendiente (a fuller,
+    versioned read of the same history), but never over limitada. None (the default) keeps this
+    function byte-for-byte what it was before this seam existed -- entrenado/pendiente stay the
+    only two words an organ (outside the model) ever gets."""
     estados: dict[str, str] = {}
     for region in REGIONES:
         clave = region["clave"]
         if clave in grupos_limitados:
             estados[clave] = "limitada"
+        elif estados_modelo is not None and clave in estados_modelo:
+            estados[clave] = estados_modelo[clave]
         elif clave in grupos_lit:
             estados[clave] = "entrenado"
         elif clave in grupos_pendientes:
@@ -159,7 +167,8 @@ def regiones_estado(grupos_lit: frozenset[str] = frozenset(),
 
 def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
              grupos_limitados: frozenset[str] = frozenset(),
-             grupos_pendientes: frozenset[str] = frozenset()) -> list[dict]:
+             grupos_pendientes: frozenset[str] = frozenset(),
+             estados_modelo: dict[str, str] | None = None) -> list[dict]:
     """This screen's own views (anclajes.json's order), each with its glow ellipses for
     `grupos_lit` -- filtered to whichever pose (front or back) that view's own image actually
     carries them for, so a leg category lights cuádriceps on a front view and glúteos +
@@ -174,8 +183,10 @@ def contexto(t: T, pantalla: str, grupos_lit: frozenset[str] = frozenset(),
     `regiones` (BODY-AVATAR-3D-REGIONES-1 ruling 3) is the WHOLE screen's own named-region state
     map, the same dict on every view in this list -- never filtered by that view's own permitidos,
     since a 3D view (unlike this 2D one) shows every region at once. No template reads it today;
-    the existing per-view glow/limitada/pendiente lists above stay exactly as they are."""
-    regiones = regiones_estado(grupos_lit, grupos_limitados, grupos_pendientes)
+    the existing per-view glow/limitada/pendiente lists above stay exactly as they are.
+    `estados_modelo` (BODY-CUERPO-ESTADO-MUSCULO-1 ruling 6) passes straight through to
+    regiones_estado -- only Hoy ever supplies it."""
+    regiones = regiones_estado(grupos_lit, grupos_limitados, grupos_pendientes, estados_modelo)
     out = []
     for v in VISTAS_POR_PANTALLA[pantalla]:
         imagen = v["imagen"]
@@ -207,6 +218,22 @@ def grupos_entrenado_pendiente(categorias_entrenadas, categorias_planeadas) -> t
     return entrenado, pendiente
 
 
+def objetivo_regiones(categorias_planeadas) -> list[str] | None:
+    """BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2: today's PLAN as its own target layer, separate from
+    the model's state -- every region a planned categoria's own CATEGORIA_GRUPOS maps to, in
+    REGIONES' own order, whether or not that region is already trained (unlike
+    grupos_entrenado_pendiente's "pendiente", this never subtracts what today's logged training
+    already covers: the plan still targets it either way). `categorias_planeadas` is the same list
+    hoy.py's own `_plan_categorias_hoy` reads (None when no plan covers today). Never [] -- None
+    both for no plan and for a plan whose categorias all map to nothing recognised, the same
+    "absent means nothing to show" contract `regiones_estado`'s own empty dict already keeps."""
+    if categorias_planeadas is None:
+        return None
+    grupos = grupos_de_categorias(categorias_planeadas)
+    out = [r["clave"] for r in REGIONES if r["clave"] in grupos]
+    return out or None
+
+
 def etiquetas_regiones(t: T) -> dict[str, str]:
     """BODY-AVATAR-3D-VISOR-1 ruling 5: the 3D viewer's own tap line names a region with the SAME
     `cuerpo.grupo.<clave>` keys the 2D caption already reads for every muscle (anatomia.GRUPOS_ORDEN).
@@ -221,12 +248,19 @@ def etiquetas_estado3d(t: T) -> dict[str, str]:
     each -- the same reason _alt() above gives (tests/test_i18n_paridad.py's dynamic-prefix guard
     needs each full key typed out, not built from a runtime state string). `sin_registro` is the
     one state `regiones_estado()` never assigns itself (a region absent from its own dict), read
-    here so the viewer can still say something honest about an untouched region."""
+    here so the viewer can still say something honest about an untouched region.
+    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 7: the five extra words body.musculo.compute's own states
+    need, same literal-call reason, plain and never medical."""
     return {
         "entrenado": t("cuerpo.estado3d.entrenado"),
         "pendiente": t("cuerpo.estado3d.pendiente"),
         "limitada": t("cuerpo.estado3d.limitada"),
         "sin_registro": t("cuerpo.estado3d.sin_registro"),
+        "sin_datos": t("cuerpo.estado3d.sin_datos"),
+        "subentrenado": t("cuerpo.estado3d.subentrenado"),
+        "en_rango": t("cuerpo.estado3d.en_rango"),
+        "sobrecargado": t("cuerpo.estado3d.sobrecargado"),
+        "recuperando": t("cuerpo.estado3d.recuperando"),
     }
 
 

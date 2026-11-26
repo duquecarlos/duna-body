@@ -15,9 +15,9 @@ from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
 from .. import (anatomia, captura_sueno, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes,
-                garmin_cuenta, goals, history, horizonte, household, identity, noche_inusual, nutriente_objetivo,
-                pull, readiness, recuperacion, reentrada, registro_cobertura, turnos_costo, tutoriales,
-                ventana_comida, viajes)
+                garmin_cuenta, goals, history, horizonte, household, identity, musculo, noche_inusual,
+                nutriente_objetivo, pull, readiness, recuperacion, reentrada, registro_cobertura, turnos_costo,
+                tutoriales, ventana_comida, viajes)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -738,7 +738,11 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     planned only (today's existing wording, unchanged -- nothing trained yet, the whole plan is
     still to come), and nothing at all (the existing empty caption, unchanged).
     BODY-LESION-ZONA-1 ruling 4: a third, quiet layer for any zona an open lesion period names for
-    today -- drawn as a hatch above both, never the training glow, with its own caption below."""
+    today -- drawn as a hatch above both, never the training glow, with its own caption below.
+    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 6: the hidden 3D view's own `regiones` map now carries
+    body.musculo.compute's fuller, versioned state per region (undertrained/in range/overloaded/
+    recovering/no data) instead of just entrenado/pendiente -- the only thing this changes; every
+    2D glow/limitada/pendiente list, caption and pixel above is untouched."""
     categorias_planeadas = _plan_categorias_hoy(conn, person_id, today_local)
     categorias_entrenadas = _entrenado_hoy_categorias(conn, person_id, today_local)
     grupos, pendientes = anatomia.grupos_entrenado_pendiente(categorias_entrenadas, categorias_planeadas)
@@ -761,13 +765,15 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     if grupos_limitados:
         nombres_zonas = [t("entreno.categoria." + z) for z in anatomia.CATEGORIA_ENUM if z in zonas]
         caption_limitada = t("cuerpo.caption.en_recuperacion", zonas=_lista_natural(t, nombres_zonas))
-    vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes)
+    estados_modelo = {clave: estado.estado for clave, estado in
+                      musculo.compute(conn, today_local.isoformat(), person_id).items()}
+    vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes, estados_modelo=estados_modelo)
     return {"vistas": vistas, "caption": caption, "caption_limitada": caption_limitada,
             "recorte": "completo",
-            "cuerpo3d": _cuerpo3d_ctx(t, vistas) if CUERPO3D_VISIBLE else None}
+            "cuerpo3d": _cuerpo3d_ctx(t, vistas, categorias_planeadas) if CUERPO3D_VISIBLE else None}
 
 
-def _cuerpo3d_ctx(t: T, vistas: list[dict]) -> dict:
+def _cuerpo3d_ctx(t: T, vistas: list[dict], categorias_planeadas: list | None) -> dict:
     """BODY-AVATAR-3D-VISOR-1 ruling 5: Hoy's own small JSON blob for the optional 3D viewer's tap
     line -- REGIONES-1's own `regiones` state map (the same dict every view in `vistas` already
     carries, read once here rather than a second anatomia call), each region's display name and
@@ -775,9 +781,17 @@ def _cuerpo3d_ctx(t: T, vistas: list[dict]) -> dict:
     call directly, never through this function, so neither carries this key and the macro's own
     `{% if cuerpo.cuerpo3d %}` gate stays true on Hoy alone. This blob is the only 3D-related
     weight every Hoy visit pays (ruling 3) -- the viewer script, the figure and its images are a
-    separate fetch the template only triggers once 3D is actually chosen."""
+    separate fetch the template only triggers once 3D is actually chosen.
+    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2: `objetivo` is a SECOND, separate layer -- today's
+    planned categorias (the same `categorias_planeadas` `_cuerpo_hoy_ctx` already read, never a
+    second database read), mapped to region keys by `anatomia.objetivo_regiones`. It never
+    overwrites `regiones` (the model's state) and `regiones` never overwrites it -- state says how
+    a muscle is doing, objetivo says which muscles today's session targets, and a muscle can be
+    both at once (recovering, say, and still planned). Drawing `objetivo` as an outline on the 3D
+    figure is the spin-on-Hoy slice's job, not this one's: this blob only carries the data."""
     return {"regiones": vistas[0]["regiones"], "nombres": anatomia.etiquetas_regiones(t),
-            "estados_texto": anatomia.etiquetas_estado3d(t)}
+            "estados_texto": anatomia.etiquetas_estado3d(t),
+            "objetivo": anatomia.objetivo_regiones(categorias_planeadas)}
 
 
 def _hoy_turno_ctx(t: T, turno: dict) -> dict:

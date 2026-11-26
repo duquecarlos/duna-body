@@ -66,13 +66,17 @@
   {% if cuerpo.cuerpo3d %}
   <p class="cuerpo-caption cuerpo3d-detalle" aria-live="polite" hidden>{{ t('cuerpo.detalle3d.inicial') }}</p>
   <p class="cuerpo-caption cuerpo3d-aviso" hidden>{{ t('cuerpo.aviso3d.figura_provisional') }}</p>
-  {# Three flat blobs, never one nested object -- tests/test_estados_vacios.py's own leak sweep
+  {# Four flat blobs, never one nested object -- tests/test_estados_vacios.py's own leak sweep
      flags a bare "{{" "}}" "{}" "[]" literal anywhere in rendered HTML, which a nested JSON
      object's own closing braces (or a genuinely empty regiones map, on a day with no state at
      all) would otherwise produce. `regiones` reads `null` on that empty day (ruling 5's own
      absent-key-means-no-state contract, carried one step further: an empty MAP means no state
-     either, and visor.js reads a null the same way it reads {}). #}
+     either, and visor.js reads a null the same way it reads {}). `objetivo`
+     (BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2-3) is the plan's own SEPARATE target layer -- never
+     merged into `regiones` -- and reads `null` the same way on a day with no plan or no
+     recognised target, never a bare "[]". #}
   <script type="application/json" class="cuerpo3d-regiones">{{ (cuerpo.cuerpo3d.regiones or none) | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-objetivo">{{ (cuerpo.cuerpo3d.objetivo or none) | tojson }}</script>
   <script type="application/json" class="cuerpo3d-nombres">{{ cuerpo.cuerpo3d.nombres | tojson }}</script>
   <script type="application/json" class="cuerpo3d-estados-texto">{{ cuerpo.cuerpo3d.estados_texto | tojson }}</script>
   {# This macro, never the screen template, loads visor.js -- `cuerpo.cuerpo3d` is Hoy-only
