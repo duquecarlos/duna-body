@@ -15,9 +15,9 @@ from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
 from .. import (anatomia, captura_sueno, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes,
-                garmin_cuenta, goals, history, horizonte, household, identity, noche_inusual, nutriente_objetivo,
-                pull, readiness, recuperacion, reentrada, registro_cobertura, turnos_costo, tutoriales,
-                ventana_comida, viajes)
+                garmin_cuenta, goals, history, horizonte, household, identity, musculo, noche_inusual,
+                nutriente_objetivo, pull, readiness, recuperacion, reentrada, registro_cobertura, turnos_costo,
+                tutoriales, ventana_comida, viajes)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -738,7 +738,11 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     planned only (today's existing wording, unchanged -- nothing trained yet, the whole plan is
     still to come), and nothing at all (the existing empty caption, unchanged).
     BODY-LESION-ZONA-1 ruling 4: a third, quiet layer for any zona an open lesion period names for
-    today -- drawn as a hatch above both, never the training glow, with its own caption below."""
+    today -- drawn as a hatch above both, never the training glow, with its own caption below.
+    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 6: the hidden 3D view's own `regiones` map now carries
+    body.musculo.compute's fuller, versioned state per region (undertrained/in range/overloaded/
+    recovering/no data) instead of just entrenado/pendiente -- the only thing this changes; every
+    2D glow/limitada/pendiente list, caption and pixel above is untouched."""
     categorias_planeadas = _plan_categorias_hoy(conn, person_id, today_local)
     categorias_entrenadas = _entrenado_hoy_categorias(conn, person_id, today_local)
     grupos, pendientes = anatomia.grupos_entrenado_pendiente(categorias_entrenadas, categorias_planeadas)
@@ -761,7 +765,9 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     if grupos_limitados:
         nombres_zonas = [t("entreno.categoria." + z) for z in anatomia.CATEGORIA_ENUM if z in zonas]
         caption_limitada = t("cuerpo.caption.en_recuperacion", zonas=_lista_natural(t, nombres_zonas))
-    vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes)
+    estados_modelo = {clave: estado.estado for clave, estado in
+                      musculo.compute(conn, today_local.isoformat(), person_id).items()}
+    vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes, estados_modelo=estados_modelo)
     return {"vistas": vistas, "caption": caption, "caption_limitada": caption_limitada,
             "recorte": "completo",
             "cuerpo3d": _cuerpo3d_ctx(t, vistas) if CUERPO3D_VISIBLE else None}
