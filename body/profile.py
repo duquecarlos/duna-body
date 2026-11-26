@@ -154,7 +154,12 @@ def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color_cls: 
     band = (f'<rect x="0" y="{y(p.high):.1f}" width="{width}" height="{max(1, y(p.low) - y(p.high)):.1f}" '
             f'class="c-inset"/>')
     last_x, last_y = (len(pts) - 1) * step, y(pts[-1])
-    first, lastm = html.escape(etiqueta_mes(p.months[0][0])), html.escape(etiqueta_mes(p.months[-1][0]))
+    # BODY-REVISION-GRAFICOS-FIGURA-1 finding 10: half the row's width minus its own CSS gap
+    # (`.row`'s 10px) is each label's own slot -- a label wider than that wraps instead of
+    # crossing into the other one's half.
+    half = width / 2 - 6
+    first = "<br>".join(html.escape(x) for x in _wrap_label(etiqueta_mes(p.months[0][0]), half))
+    lastm = "<br>".join(html.escape(x) for x in _wrap_label(etiqueta_mes(p.months[-1][0]), half))
     aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
     # Fixed height, stretched width: lines keep their thickness (non-scaling-stroke); labels are HTML, not SVG text.
     body = (f'<svg viewBox="0 0 {width} {top + h + 6}" width="100%" height="110" role="img"{aria} '
@@ -167,6 +172,16 @@ def month_svg(p: MetricProfile, width: int = 320, height: int = 120, color_cls: 
         points = [{"x": i / (len(pts) - 1), "label": f"{etiqueta_mes(m[0])}: {valor_fmt(m[1])}", "m": m[0]}
                   for i, m in enumerate(p.months)]
     return chart_figure(body, points, link_label=link_label, data_key=p.key)
+
+
+def _wrap_label(label: str, slot: float) -> list[str]:
+    """BODY-REVISION-GRAFICOS-FIGURA-1 finding 10: reuses turnos.py's own perfil-chart guard
+    (`_label_px`/`_perfil_wrap`, BODY-TURNOS-PERFIL-LEGIBLE-1) so month_svg/window_svg's end-of-
+    range labels wrap at a word break instead of ever overlapping -- a deferred import, since
+    turnos.py -> comun.py -> this module already, and importing turnos.py at this module's own
+    top level would be circular."""
+    from .rutas import turnos
+    return turnos._perfil_wrap(label, slot)
 
 
 def _hits(points: list[tuple[float, str]], step: float, height: float, titles: list[str]) -> str:
@@ -289,7 +304,9 @@ def window_svg(w: Window, low: float, high: float, nights: set[str] = frozenset(
     out.append(_hits([(i * step, f"/day/{d.isoformat()}") for i, d in enumerate(days)], step, full,
                      [etiqueta_dia(d) for d in days]))
     aria = f' aria-label="{html.escape(aria_label)}"' if aria_label else ""
-    first, lastd = html.escape(etiqueta_dia(days[0])), html.escape(etiqueta_dia(days[-1]))
+    half = width / 2 - 6
+    first = "<br>".join(html.escape(x) for x in _wrap_label(etiqueta_dia(days[0]), half))
+    lastd = "<br>".join(html.escape(x) for x in _wrap_label(etiqueta_dia(days[-1]), half))
     body = (f'<svg viewBox="0 0 {width} {full}" width="100%" height="110" role="img"{aria} '
             f'preserveAspectRatio="none" class="chart-svg">{"".join(out)}</svg>'
             f'<div class="row k fs-12"><span>{first}</span>'

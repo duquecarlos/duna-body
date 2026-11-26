@@ -198,6 +198,13 @@ button.taplink{background:none;border:0;padding:0;color:inherit;font:inherit;cur
 .costrow:active{background:var(--wash)}
 .list{list-style:none;margin:0;padding:0}
 .list li{background:var(--card);border:1px solid var(--soft);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+/* BODY-REVISION-GRAFICOS-FIGURA-1 ruling 5: Día's workout link was a 58x20 inline tap target --
+   the whole row is the link now (day.html), and this min-height is its 44px hit area. */
+.entreno-row{min-height:44px}
+/* Same ruling: the goal detail's linked goal/experiment rows (.row.k.py-4, goal.html) were
+   28-30px tall -- this modifier, added only to the two that are <a> links, reaches 44px without
+   touching the plain (non-link) rows that already share .row.k.py-4. */
+.row-tap{min-height:44px}
 .navday{display:flex;gap:6px}
 .btn{display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;min-width:44px;min-height:44px;padding:0 12px;border-radius:7px;border:1px solid var(--line);background:var(--card);font-weight:600;font-size:14px;color:var(--ink);cursor:pointer;font-family:inherit}
 .btn:active{background:var(--inset)}

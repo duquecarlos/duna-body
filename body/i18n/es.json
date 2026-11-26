@@ -1022,7 +1022,7 @@
   "trends.patron.vuelta.post_3": "el día +3 después de un bloque de noches",
   "trends.patron.vuelta.post_4": "el día +4 después de un bloque de noches",
   "trends.racha.titulo": "Desde {mes} · cerrando la brecha",
-  "trends.racha.sub": "{dias} días de todo el historial de tu reloj. Cada barra es una semana de sesiones de fuerza.",
+  "trends.racha.sub": "{dias} días desde tu primera actividad registrada. Cada barra es una semana de sesiones de fuerza.",
   "trends.racha.piso_nota": "Verde cuando llegó a {piso}. La línea punteada es el piso de tu plan.",
   "trends.racha.noche_nota": "Marcas azules: semanas con turno de noche.",
   "trends.racha.semanas_one": "1 semana",

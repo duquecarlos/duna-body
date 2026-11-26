@@ -465,6 +465,21 @@ class EstaticosAccesibilidadTest(unittest.TestCase):
             self.assertLessEqual(int(m.group(1)), 375)
 
 
+class EntrenoRowTapTargetTest(unittest.TestCase):
+    """BODY-REVISION-GRAFICOS-FIGURA-1 ruling 5: Día's workout link was a 58x20 inline tap target
+    (a.no-underline around just the activity name) -- `entreno-row` is the class that now makes
+    the whole row one 44px-tall block link, through min-height alone (no visual change bigger
+    than needed)."""
+
+    def test_css_entreno_row_is_44px(self):
+        css = (ROOT / "body" / "static" / "body.css").read_text(encoding="utf-8")
+        self.assertIn(".entreno-row{min-height:44px}", css)
+
+    def test_workout_link_is_a_block_row(self):
+        html = (ROOT / "body" / "templates" / "day.html").read_text(encoding="utf-8")
+        self.assertIn('<a class="block no-underline entreno-row" href="{{ a.href }}">', html)
+
+
 class DemoCoverageTest(unittest.TestCase):
     """Ruling 8: the demo person shows every new card -- shift today, a planned session with a
     time, a timed habit, a night block starting in 3 days, and partial-day stress/steps."""

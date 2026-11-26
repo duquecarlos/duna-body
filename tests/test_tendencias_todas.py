@@ -113,6 +113,22 @@ class TrendsPageWithExtrasTest(unittest.TestCase):
         self.assertNotIn("Respiración", page)
         self.assertNotIn('id="respiration_awake"', page)
 
+    def test_since_caption_carries_a_year(self):
+        """BODY-REVISION-GRAFICOS-FIGURA-1 finding 11a: the "since" caption used t.long_date,
+        which has no year -- comun._short_date does ("1 sep 2026" style), and the earliest day
+        with any data here is 2026-09-01."""
+        _as(1)
+        page = self.client.get("/trends").text
+        self.assertIn("1 sep 2026", page)
+
+    def test_body_view_carries_hoy_figura_cap(self):
+        """BODY-REVISION-GRAFICOS-FIGURA-1 finding 15/ruling 1: Trends' body view used no height
+        cap at all, unlike Today's -- `hoy-figura` is Today's own class, reused here rather than
+        a second rule."""
+        _as(1)
+        page = self.client.get("/trends").text
+        self.assertIn("hoy-figura", page)
+
     def test_fewer_than_min_days_gets_no_card(self):
         _as(1)
         page = self.client.get("/trends").text

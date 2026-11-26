@@ -398,6 +398,12 @@ def _racha_ctx(t: T, conn, person_id: int, turnos_on: bool, hoy: date) -> dict |
         return None
     semanas = result["semanas"]
     titulo = t("trends.racha.titulo", mes=t.month_year(date.fromisoformat(result["desde"])))
+    # BODY-REVISION-GRAFICOS-FIGURA-1 finding 11b: result["dias_historia"] is a calendar SPAN
+    # (today minus this person's first ever activity row, watch or manual, entreno_racha.py's
+    # own `primera`) -- a different measure from the page's top "days" (db.days_with_data's own
+    # COUNT of distinct garmin-sourced daily_metric days, which can have gaps a span does not
+    # see). The two numbers can legitimately differ, so the label names its own subject instead
+    # of echoing the top count's "days with data" claim.
     sub = t("trends.racha.sub", dias=t.num(result["dias_historia"]))
     piso_nota = t("trends.racha.piso_nota", piso=t.num(piso)) if piso is not None else None
     noche_nota = t("trends.racha.noche_nota") if turnos_on else None
@@ -630,7 +636,10 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
         if fuerza_mini:
             kpi_tiles.append(fuerza_mini)
     return comun._render("trends.html", t=t, tab="trends", cards=cards, week=week if r == "all" else None,
-                   since=t.long_date(date.fromisoformat(since)) if since else "", days=t.num(days),
+                   # BODY-REVISION-GRAFICOS-FIGURA-1 finding 11a: t.long_date has no year
+                   # (weekday, day, month only) -- comun._short_date does, which matters here
+                   # since "since" can span into a past year.
+                   since=comun._short_date(t, date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights), marcas=bool(marcas),
                    viajes=bool(viaje_dias),
                    month_title=t.month_year(month) if month else None, racha=racha, kpi_tiles=kpi_tiles,

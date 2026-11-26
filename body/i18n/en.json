@@ -1022,7 +1022,7 @@
   "trends.patron.vuelta.post_3": "by day +3 after a night block",
   "trends.patron.vuelta.post_4": "by day +4 after a night block",
   "trends.racha.titulo": "Since {mes} · closing the gap",
-  "trends.racha.sub": "{dias} days from your watch's full history. Each bar is a week of strength sessions.",
+  "trends.racha.sub": "{dias} days since your first recorded activity. Each bar is a week of strength sessions.",
   "trends.racha.piso_nota": "Green when it reached {piso}. The dashed line is the floor of your plan.",
   "trends.racha.noche_nota": "Blue ticks: night-shift weeks.",
   "trends.racha.semanas_one": "1 week",

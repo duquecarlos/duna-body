@@ -163,5 +163,26 @@ class ShiftsHtmlEqualityTest(unittest.TestCase):
         self.assertEqual(with_reader.text, without_reader.text)
 
 
+class ShiftsHeroCapTest(unittest.TestCase):
+    """BODY-REVISION-GRAFICOS-FIGURA-1 finding 15/ruling 1: Shifts' body view used no height cap
+    at all, unlike Today's -- `hoy-figura` is Today's own class, reused here rather than a second
+    rule, so the same max-height now applies."""
+
+    client = TestClient(web.app, follow_redirects=False)
+
+    def test_shifts_body_view_carries_hoy_figura(self):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "hero.db"
+        conn = db.connect()
+        self.addCleanup(conn.close)
+        db.init(conn)
+        conn.execute("INSERT INTO shift (person_id, day, kind, source) VALUES (1, '2026-03-02', 'day', 'manual')")
+        conn.commit()
+        r = self.client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("hoy-figura", r.text)
+
+
 if __name__ == "__main__":
     unittest.main()

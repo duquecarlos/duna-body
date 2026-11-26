@@ -22,7 +22,7 @@
 </div>
 {% if month_title %}<p class="mt-0 mb-12"><a class="taplink" href="/trends">{{ t('trends.back_hist') }}</a></p>{% endif %}
 
-{{ cuerpo_vista(t, cuerpo) }}
+{{ cuerpo_vista(t, cuerpo, 'hoy-figura') }}
 
 {% macro kpi_tile(x) %}
 <a class="card" href="#{{ x.anchor }}">
