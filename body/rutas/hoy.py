@@ -770,10 +770,10 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes, estados_modelo=estados_modelo)
     return {"vistas": vistas, "caption": caption, "caption_limitada": caption_limitada,
             "recorte": "completo",
-            "cuerpo3d": _cuerpo3d_ctx(t, vistas) if CUERPO3D_VISIBLE else None}
+            "cuerpo3d": _cuerpo3d_ctx(t, vistas, categorias_planeadas) if CUERPO3D_VISIBLE else None}
 
 
-def _cuerpo3d_ctx(t: T, vistas: list[dict]) -> dict:
+def _cuerpo3d_ctx(t: T, vistas: list[dict], categorias_planeadas: list | None) -> dict:
     """BODY-AVATAR-3D-VISOR-1 ruling 5: Hoy's own small JSON blob for the optional 3D viewer's tap
     line -- REGIONES-1's own `regiones` state map (the same dict every view in `vistas` already
     carries, read once here rather than a second anatomia call), each region's display name and
@@ -781,9 +781,17 @@ def _cuerpo3d_ctx(t: T, vistas: list[dict]) -> dict:
     call directly, never through this function, so neither carries this key and the macro's own
     `{% if cuerpo.cuerpo3d %}` gate stays true on Hoy alone. This blob is the only 3D-related
     weight every Hoy visit pays (ruling 3) -- the viewer script, the figure and its images are a
-    separate fetch the template only triggers once 3D is actually chosen."""
+    separate fetch the template only triggers once 3D is actually chosen.
+    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2: `objetivo` is a SECOND, separate layer -- today's
+    planned categorias (the same `categorias_planeadas` `_cuerpo_hoy_ctx` already read, never a
+    second database read), mapped to region keys by `anatomia.objetivo_regiones`. It never
+    overwrites `regiones` (the model's state) and `regiones` never overwrites it -- state says how
+    a muscle is doing, objetivo says which muscles today's session targets, and a muscle can be
+    both at once (recovering, say, and still planned). Drawing `objetivo` as an outline on the 3D
+    figure is the spin-on-Hoy slice's job, not this one's: this blob only carries the data."""
     return {"regiones": vistas[0]["regiones"], "nombres": anatomia.etiquetas_regiones(t),
-            "estados_texto": anatomia.etiquetas_estado3d(t)}
+            "estados_texto": anatomia.etiquetas_estado3d(t),
+            "objetivo": anatomia.objetivo_regiones(categorias_planeadas)}
 
 
 def _hoy_turno_ctx(t: T, turno: dict) -> dict:

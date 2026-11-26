@@ -249,6 +249,26 @@ class ContextoRegionesSeamTest(unittest.TestCase):
         self.assertEqual(len(espalda["glow"]), 2)
 
 
+class ObjetivoRegionesTest(unittest.TestCase):
+    """BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2: the plan's own SEPARATE target layer -- every region
+    a planned categoria's own CATEGORIA_GRUPOS maps to, REGIONES' own order, regardless of
+    whether it is already trained. Never [] -- None for no plan, or one that maps to nothing."""
+
+    def test_no_plan_gives_null(self):
+        self.assertIsNone(anatomia.objetivo_regiones(None))
+
+    def test_categoria_mapping_to_nothing_gives_null(self):
+        self.assertIsNone(anatomia.objetivo_regiones(["cardio"]))
+
+    def test_categoria_maps_to_its_regions_in_regiones_order(self):
+        self.assertEqual(anatomia.objetivo_regiones(["pierna"]), ["cuadriceps", "isquios"])
+
+    def test_an_already_trained_region_stays_a_target(self):
+        # objetivo depends only on what is PLANNED -- it carries no "already trained" input at
+        # all, so a region that is both planned and trained is still a target, by construction.
+        self.assertEqual(anatomia.objetivo_regiones(["hombro"]), ["hombros"])
+
+
 class ContextoVistasUnaffectedByModeloTest(unittest.TestCase):
     """Ruling 6's last sentence: `estados_modelo` only ever changes the hidden `regiones` map --
     the per-view glow/limitada/pendiente lists, labels, alts and every other 2D field Hoy's own

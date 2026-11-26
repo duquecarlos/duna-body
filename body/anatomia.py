@@ -218,6 +218,22 @@ def grupos_entrenado_pendiente(categorias_entrenadas, categorias_planeadas) -> t
     return entrenado, pendiente
 
 
+def objetivo_regiones(categorias_planeadas) -> list[str] | None:
+    """BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2: today's PLAN as its own target layer, separate from
+    the model's state -- every region a planned categoria's own CATEGORIA_GRUPOS maps to, in
+    REGIONES' own order, whether or not that region is already trained (unlike
+    grupos_entrenado_pendiente's "pendiente", this never subtracts what today's logged training
+    already covers: the plan still targets it either way). `categorias_planeadas` is the same list
+    hoy.py's own `_plan_categorias_hoy` reads (None when no plan covers today). Never [] -- None
+    both for no plan and for a plan whose categorias all map to nothing recognised, the same
+    "absent means nothing to show" contract `regiones_estado`'s own empty dict already keeps."""
+    if categorias_planeadas is None:
+        return None
+    grupos = grupos_de_categorias(categorias_planeadas)
+    out = [r["clave"] for r in REGIONES if r["clave"] in grupos]
+    return out or None
+
+
 def etiquetas_regiones(t: T) -> dict[str, str]:
     """BODY-AVATAR-3D-VISOR-1 ruling 5: the 3D viewer's own tap line names a region with the SAME
     `cuerpo.grupo.<clave>` keys the 2D caption already reads for every muscle (anatomia.GRUPOS_ORDEN).
