@@ -36183,3 +36183,96 @@ orchestrator's own 375px measurement before any deploy).
 Merged as `6220fdca9a506851cf54c894e65e86cd93b51a41`, base `main` at
 `c06eef7a91b93329e4b0c51673d049f67786a964`, tree `e1d29daee54225062a622f9b2570ea7db6385bb6` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-REVISION-COPY-GAPS-1
+
+Five findings from BODY-REVISION-1-INV, each under its own ruling (16/1, 18/2, 19/3, 21/4, 22/5).
+
+**Finding 16 (shifts history).** `turnos.py` gained `_historial_rango(t, received, first_day,
+last_day)`: the batch's own CURRENT rows' day range (`MIN`/`MAX` read as the same combined
+`SELECT`'s own extra columns, never a second statement), falling back to the mail's own received
+date when no current row is left. `_historial_filas`'s `linea` now reads `{rango} · {n_frag} ·
+{estado}`, never the file name; `shifts.historial.patron` is gone. `shifts.html`'s summary now
+reads "Más" with "Deshacer" moved to a line inside the disclosure, same confirmation as before, so
+every existing count/presence assertion on the word "Deshacer" still holds unchanged.
+
+**Finding 18 (day's all measures).** `hoy.py`'s `day_view` splits `cards` into `cards_con_dato`/
+`cards_sin_dato` (by `raw is not None`) right after the existing build loop -- no new query.
+`day.html` factors the card markup into a local `{% macro card_item(c) %}`, keeps the main grid for
+`cards_con_dato`, and folds `cards_sin_dato` under a closed `<details>` "Sin registro hoy (n)" /
+"Not logged today (n)", every row and its own link kept, none removed.
+
+**Finding 19 (yesterday-unmarked nudge).** `experimentos.py` gained `NUDGE_DISMISS_KIND`,
+`nudge_oculto`/`marcar_nudge_oculto` (the same generic `moment`-table convention
+`noche_inusual.py`'s own `DISMISS_KIND`/`marcar_vista` already uses) and `sin_marcar_ayer` (active,
+non-habit experiments whose day filter counts yesterday with no `experimento_registro` row yet).
+`rutas/experimentos.py` gained `nudge_ayer_ctx` (at most one line: a single unmarked experiment's
+own one-tap "Mark yesterday", several name only the count) and a new `POST
+/experiments/nudge/dismiss` route, scoped to today's own date. `today.html` renders it as one
+`aviso` block, never more than one nudge line. Measured cost: `/`'s own statement ceiling moved
+from 155 to 205 (`ceil(157 * 1.3)`, up from 131) in `tests/test_rendimiento.py` -- one unconditional
+dismissal check plus one batched active-experiments read, never per-experiment on that file's own
+fixture.
+
+**Finding 21 (Help answers).** `tutoriales.py` gained `respuesta_tarea(t, tarea_id)`, reading
+`tutoriales.respuesta.<id>` -- 21 new keys, one per catalogue task, both languages.
+`rutas/ayuda.py`'s `_tarea_ayuda_ctx` now takes `t` and carries `respuesta`; `ayuda.html` shows it
+as a `<p class="read">` between the title and the video slot, with an HTML comment naming where a
+thumbnail could sit (`ayuda.miniatura`, no image yet) in that same gap. The video slot is
+unchanged; the no-video fallback text moved from "Video en preparación"/"Video coming soon" to
+"Video más tarde"/"Video later", smaller (`class="k"`, was `"note"`).
+
+**Finding 22 (readiness reading).** `readiness.py` gained `ACCION_VERSION = "v1"` and a private
+`_ACCION_PARTE` table (hrv/stress/resting_hr share "liviano"; sleep is "sueno"; battery is
+"bateria") behind `accion(parte_key)` -- the words themselves live in `body/i18n/` as
+`today.accion.<word>`, never in `readiness.py`, so bumping the table never touches a translation.
+`hoy.py`'s `_reading` now always names the weakest part (with its one action line) and, when there
+is a second part, the strongest one too; `today.all_normal` is now dead code, left in place (not in
+this slice's `touches`). A caller only ever asks `accion` of a part actually in `Readiness.parts`,
+never one of its `missing`, so there is no "no data" case to name.
+
+**Two guard-test failures outside this slice's own `touches` list, fixed by rewording copy, never
+by touching the guard.** `tests/test_registro_tu.py`'s third-person-register guard flagged four of
+the new `tutoriales.respuesta.*` answers (su/sus/puede read as addressed to the reader) --
+`abrir-un-dia` ("sus medidas" -> "tus medidas"), `crear-una-meta` ("sus propios hábitos" ->
+"hábitos propios"), `cambiar-el-objetivo` ("su propia página" -> "la página de esa meta") and
+`el-nivel-de-datos-del-asistente` ("puede leer" -> "lee"), with the matching English strings
+realigned for parity. `tests/test_turnos_opcional_3.py`'s `NoSettingTest`/
+`NullSettingNoShiftsTest` failed because `trabajas-por-turnos`'s own answer named the Turnos/Shifts
+tab by its capitalized name, leaking that word onto Ayuda even with shift-tracking off -- reworded
+to "esa pestaña" / "that tab". A third guard, `tests/test_web_entry.py`'s `RouteSetTest` (also
+outside `touches`), has no copy-only fix: it pins the app's whole route set, and the new
+`POST /experiments/nudge/dismiss` route was missing from it, so that one table gained one line
+instead (the same way every other slice that adds a route has added one here).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run as 16 sequential
+foreground/background chunks across all 251 discovered modules (one `discover` call cannot finish
+inside the harness's own 600s foreground budget), no overlap and no gap. Three chunks hit a real
+failure on first pass (the two guard tests above, plus one further census-table gap), each fixed
+and that chunk re-run in full, green; one further failure (`test_vivo`'s
+`test_un_proceso_fresco_se_actualiza_a_la_nueva_main`, a real subprocess/git timing test) was a
+flake under the load of back-to-back chunks -- confirmed by running `test_vivo` alone, 52/52 green,
+including that same test. Every chunk green on the final tree. Reconciled against an independent
+collect-only walk of the whole suite: **5907 tests** -- exactly BODY-REVISION-GRAFICOS-FIGURA-1's
+own 5888 plus the 19 new cases added here (7 + 4 + 4 + 3 + 1, by module above).
+
+**Customer bytes changed.** `shifts.historial.linea`/`shifts.historial.rango` (new), `shifts.
+historial.mas` ("Más"/"More"), `shifts.historial.patron` removed, `day.sin_registro` ("Sin registro
+hoy ({n})"/"Not logged today ({n})"), `today.experimento_nudge_uno`/`_varios`/`_marcar`/
+`_descartar` (new), `ayuda.en_preparacion` ("Video en preparación"->"Video más tarde" / "Video
+coming soon"->"Video later"), 21 new `tutoriales.respuesta.<id>` keys (both languages, five of them
+reworded after the guard-test fixes above), `today.accion.liviano`/`sueno`/`bateria` (new). Plus
+one new HTML comment naming the `ayuda.miniatura` thumbnail slot. BODY-REVISION-COPY-GAPS-1's own
+dispatch explicitly authorised merging despite this ("YOU MAY MERGE... list every changed string...
+so the orchestrator can measure them at 375px before any deploy. No deploy, no push.") -- merge
+proceeds; the strings above are listed for that 375px measurement.
+
+**Merge.** `git switch main`; `git merge --no-ff feat/body-revision-copy-gaps-1`; branch deleted.
+No deploy, no push.
+
+**Open followups.** None raised beyond what the orchestrator itself asked for (the 375px
+measurement before any deploy).
+
+Merged as `c1b15fdc2f8a4a22bb2d34c92e7fa7022efb4f69`, base `main` at
+`cc79a2d07591403848018131acaec80ab4b40a17`, tree `3eeb44af13e4df822bdbc0a77ea264137bdae15c` (equal
+to the branch tip's own tree; `git diff` between the two commits is empty).
