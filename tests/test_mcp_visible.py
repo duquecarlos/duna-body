@@ -79,6 +79,10 @@ class _BaseTest(unittest.TestCase):
 
 
 class HoyLineaTest(_BaseTest):
+    """BODY-HOY-LO-QUE-VENCE-1 ruling 4 (BODY-HOY-LO-QUE-VENCE-1.W ruling 4): the old standalone
+    mcp-proposal aviso banner is gone -- the same fact (a proposal still waiting) now shows once,
+    in the "Por vencer" strip, with the same link."""
+
     def test_no_line_when_there_is_no_pending_mcp_proposal(self):
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
@@ -87,14 +91,15 @@ class HoyLineaTest(_BaseTest):
     def test_one_pending_proposal_singular_wording_and_link(self):
         cid, _ = _crear_propuesta_mcp(self.conn, self.person_id)
         r = self.client.get("/")
-        self.assertIn("Tu asistente personal te propone 1 cambio · Revisar", r.text)
+        self.assertIn("Por vencer", r.text)
+        self.assertIn("Tu asistente tiene una propuesta esperando", r.text)
         self.assertIn(f"/?asis_conversacion={cid}#asis-btn", r.text)
 
     def test_two_pending_proposals_plural_wording_and_newest_link(self):
         _crear_propuesta_mcp(self.conn, self.person_id, start_day="2020-01-01")
         cid2, _ = _crear_propuesta_mcp(self.conn, self.person_id, start_day="2020-02-01")
         r = self.client.get("/")
-        self.assertIn("Tu asistente personal te propone 2 cambios · Revisar", r.text)
+        self.assertIn("Tu asistente tiene 2 propuestas esperando", r.text)
         self.assertIn(f"/?asis_conversacion={cid2}#asis-btn", r.text)
 
     def test_english_wording(self):
@@ -102,7 +107,7 @@ class HoyLineaTest(_BaseTest):
         self.conn.commit()
         _crear_propuesta_mcp(self.conn, self.person_id)
         r = self.client.get("/")
-        self.assertIn("Your personal assistant suggests 1 change · Review", r.text)
+        self.assertIn("Your assistant has a proposal waiting", r.text)
 
     def test_line_disappears_after_applying_the_last_pending_card(self):
         _, pid = _crear_propuesta_mcp(self.conn, self.person_id)

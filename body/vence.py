@@ -12,7 +12,10 @@ Left out, and why (BODY-HOY-LO-QUE-VENCE-1-INV's own census): shared-meal portio
 imports carry no date to sort by; the pain follow-up and the "still going?" period check are
 already their own interactive cards; a future plan session belongs to Metas' own week view; the
 night-shift week's card stays exactly as it is -- it carries a recovery estimate the strip would
-only repeat, never a date fact of its own the strip would otherwise be the only place to say.
+only repeat, never a date fact of its own the strip would otherwise be the only place to say; the
+sleep stream (BODY-HOY-LO-QUE-VENCE-1.W ruling 3, same reasoning as BODY-HOY-PENDIENTES-REGISTRO-1
+ruling 3) stays out too -- a missing night is the watch's own sync problem, already Hoy's own sync
+card, never this strip's to repeat.
 """
 from __future__ import annotations
 
@@ -156,3 +159,25 @@ def lineas(conn, person_id: int, hoy: date, *, mcp_pendientes: dict | None,
     out += _lineas_metas(conn, person_id, hoy)
     out.sort(key=lambda l: (_ESTADO_ORDEN[l["estado"]], l["dia"]))
     return out
+
+
+def cuando(t, dia: str, hoy: date) -> str:
+    """BODY-HOY-LO-QUE-VENCE-1.W ruling 2: the strip's OWN relative-time words, never an absolute
+    date however far ahead `dia` falls -- `body/rutas/hoy.py`'s own `_dia_relativo` looks only
+    backward (hoy/ayer, falling back to an absolute date otherwise) and other screens depend on
+    that, so it is left unchanged; this is a separate, bidirectional function, used by the strip
+    alone. Literal `t(...)` calls only, each a plain es/en pair with the app's own singular/plural
+    convention -- `en_dias_one`/`hace_dias_one` never fire through this function today (a 1-day gap
+    is always "mañana"/"ayer" first), kept for the same reason every other counted pair in this app
+    keeps its singular form even where a caller rarely reaches it."""
+    delta = (date.fromisoformat(dia) - hoy).days
+    if delta == 0:
+        return t("vence.cuando.hoy")
+    if delta == 1:
+        return t("vence.cuando.manana")
+    if delta == -1:
+        return t("vence.cuando.ayer")
+    if delta > 0:
+        return t("vence.cuando.en_dias_one") if delta == 1 else t("vence.cuando.en_dias_other", n=t.num(delta))
+    n = -delta
+    return t("vence.cuando.hace_dias_one") if n == 1 else t("vence.cuando.hace_dias_other", n=t.num(n))

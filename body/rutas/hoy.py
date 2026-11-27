@@ -703,7 +703,9 @@ def _vence_ctx(t: T, conn, person_id: int, today_local: date, mcp_pendientes: di
     None the instant nothing is due at all (ruling 3: no card, no empty title, no bare [] or {}).
     `mcp_pendientes` and `cobertura_pendientes` are sources this route already computed for its own
     other cards (ruling 1); `ids_extra` is the slice of active plan horizons beyond the plan card's
-    own cap, already bounded by vence.VENCE_MODELO's own horizontes_max."""
+    own cap, already bounded by vence.VENCE_MODELO's own horizontes_max. Each line's own `tiempo`
+    is `vence.cuando` (BODY-HOY-LO-QUE-VENCE-1.W ruling 2), never `_dia_relativo` below -- the
+    strip's own relative words never fall back to an absolute date, however far ahead `dia` falls."""
     todas = vence.lineas(conn, person_id, today_local, mcp_pendientes=mcp_pendientes,
                           cobertura_pendientes=cobertura_pendientes,
                           cadencia=registro_cobertura.MODELO["cadencia"], ids_extra=ids_extra)
@@ -718,7 +720,7 @@ def _vence_ctx(t: T, conn, person_id: int, today_local: date, mcp_pendientes: di
         mas = t("vence.mas_other", n=t.num(extra))
     else:
         mas = None
-    lineas_ctx = [{"texto": _vence_texto(t, l), "tiempo": _dia_relativo(t, l["dia"], today_local),
+    lineas_ctx = [{"texto": _vence_texto(t, l), "tiempo": vence.cuando(t, l["dia"], today_local),
                    "href": l["href"], "vencido": l["estado"] == "vencido"} for l in mostradas]
     return {"titulo": t("vence.titulo"), "lineas": lineas_ctx, "mas": mas}
 

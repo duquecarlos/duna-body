@@ -20,6 +20,7 @@ from body.rutas import comun, hoy
 from tests._db import open_conn
 
 ES = T("es")
+EN = T("en")
 HOY = date(2026, 11, 20)
 
 _CADENCIA = {"comidas": "daily", "proteina": "daily", "peso": "weekly", "cintura": "weekly",
@@ -99,6 +100,10 @@ class CapTest(unittest.TestCase):
         ctx = hoy._vence_ctx(ES, conn, 1, HOY, None, {}, [])
         self.assertEqual(len(ctx["lineas"]), 4)
         self.assertEqual(ctx["mas"], "+2 más")
+        # BODY-HOY-LO-QUE-VENCE-1.W ruling 2: the card's own "tiempo" is each line's relative words
+        # (vence.cuando) -- "en 2 días", never a bare absolute date the unwidened `_dia_relativo`
+        # would have shown for anything past tomorrow.
+        self.assertEqual([l["tiempo"] for l in ctx["lineas"]], ["hace 3 días", "ayer", "hoy", "en 2 días"])
 
     def test_no_more_line_when_four_or_fewer(self):
         conn = _mkconn(self, "cap_ctx_none.db")
@@ -212,6 +217,36 @@ class CadaHechoUnaVezTest(unittest.TestCase):
         self.assertEqual(page.count("ZZ meta con plazo"), 1)
         self.assertEqual(page.count("Falta registrar peso esta semana"), 1)
         self.assertEqual(page.count("Tu asistente tiene una propuesta esperando"), 1)
+
+
+class CuandoTest(unittest.TestCase):
+    """BODY-HOY-LO-QUE-VENCE-1.W ruling 2: the strip's own relative-time words -- hoy/mañana/ayer,
+    otherwise the n-days form, never an absolute date however far ahead `dia` falls (the gap
+    `_dia_relativo` itself leaves, since it only ever looks backward)."""
+
+    def test_today(self):
+        self.assertEqual(vence.cuando(ES, HOY.isoformat(), HOY), "hoy")
+        self.assertEqual(vence.cuando(EN, HOY.isoformat(), HOY), "today")
+
+    def test_tomorrow(self):
+        dia = (HOY + timedelta(days=1)).isoformat()
+        self.assertEqual(vence.cuando(ES, dia, HOY), "mañana")
+        self.assertEqual(vence.cuando(EN, dia, HOY), "tomorrow")
+
+    def test_yesterday(self):
+        dia = (HOY - timedelta(days=1)).isoformat()
+        self.assertEqual(vence.cuando(ES, dia, HOY), "ayer")
+        self.assertEqual(vence.cuando(EN, dia, HOY), "yesterday")
+
+    def test_several_days_ahead_never_falls_back_to_an_absolute_date(self):
+        dia = (HOY + timedelta(days=5)).isoformat()
+        self.assertEqual(vence.cuando(ES, dia, HOY), "en 5 días")
+        self.assertEqual(vence.cuando(EN, dia, HOY), "in 5 days")
+
+    def test_several_days_overdue_never_falls_back_to_an_absolute_date(self):
+        dia = (HOY - timedelta(days=5)).isoformat()
+        self.assertEqual(vence.cuando(ES, dia, HOY), "hace 5 días")
+        self.assertEqual(vence.cuando(EN, dia, HOY), "5 days ago")
 
 
 if __name__ == "__main__":

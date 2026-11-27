@@ -464,11 +464,14 @@ class DemoHoyPendientesTest(unittest.TestCase):
         self.client = TestClient(web.app, follow_redirects=False)
 
     def test_hoy_shows_the_pendientes_line_in_spanish(self):
+        """BODY-HOY-LO-QUE-VENCE-1 ruling 4 (BODY-HOY-LO-QUE-VENCE-1.W ruling 4): the plan card's
+        own trailing note is gone -- the same fact (protein not logged today) now shows once, in
+        the "Por vencer" strip, with its own link to the assistant."""
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
-        self.assertIn("Para tu plan falta registrar hoy:", r.text)
-        self.assertIn("proteína", r.text)
-        self.assertIn('href="#asis-btn">Regístralo con el asistente</a>', r.text)
+        self.assertIn("Por vencer", r.text)
+        self.assertIn("Falta registrar proteína esta semana", r.text)
+        self.assertIn('href="#asis-btn">Falta registrar proteína esta semana</a>', r.text)
 
 
 class PlanHorizonteSeedTest(unittest.TestCase):
