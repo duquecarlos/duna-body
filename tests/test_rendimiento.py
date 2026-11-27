@@ -84,6 +84,11 @@ client = TestClient(web.app, follow_redirects=False)
 # BODY-ENTRENO-VISTA-SESION-1: /day/{day}/entreno/{source_id}'s own ceiling, new with this slice.
 # Measured 12 statements against this file's own fixture (the manual "Fuerza" session _seed() logs
 # for `day`, two corrected sets, no intraday series), ceil(12 * 1.3) = 16.
+# BODY-ENTRENO-VINCULO-2: raised again -- this file's own fixture's manual "Fuerza" session now
+# auto-links to demo._seed()'s own unlinked watch strength_training row on the same `day` (ruling
+# 1's new mirror direction), so the route's own real path is the merged (watch) identity, which
+# DOES carry a `type` and `start_local` and so DOES reach ayuno_entreno's two reads the comment
+# below used to say this fixture never hit. Measured 23 statements, ceil(23 * 1.3) = 30.
 # BODY-PLAN-HOY-1: /'s own ceiling, raised for the "Tu plan esta semana" card (body/rutas/hoy.py's
 # _plan_semana_ctx) -- one bounded horizonte.horizontes() listing plus up to PLANES_HOY_MAX
 # horizonte.resumen() calls, ruling 3's own bound. A person with no plan pays exactly one extra
@@ -196,8 +201,9 @@ _CEILINGS = {
     # BODY-AYUNO-ENTRENO-1 ruling 2/6: this file's own fixture's manual session (no `type`, no
     # `start_local`) never reaches ayuno_entreno's two reads (horas_desde_comida's own early
     # "no start_local" return, comparar's own early "no type" return) -- measured 16 statements
-    # with and without this slice's own code, ceiling unchanged.
-    "/day/{day}/entreno/{source_id}": 16,
+    # with and without this slice's own code, ceiling unchanged. BODY-ENTRENO-VINCULO-2: raised to
+    # 30 -- see the comment above this table for why.
+    "/day/{day}/entreno/{source_id}": 30,
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
     "/garmin/estado-vivo": 6,  # BODY-SYNC-VIVO-2: measured 4 (local mode's early 404, same path as
@@ -311,6 +317,17 @@ def _seed(conn) -> dict:
     source_id = db.create_manual_session(conn, 1, day, None, "Fuerza")
     db.correct_exercise_set(conn, 1, "manual", source_id, 1, category="espalda", exercise="remo con barra")
     db.correct_exercise_set(conn, 1, "manual", source_id, 2, category="brazo", exercise="curl de biceps")
+    # BODY-ENTRENO-VINCULO-2: when demo._seed()'s own random draw already left an unlinked watch
+    # strength_training row on `day`, create_manual_session's own new auto-link (ruling 1) folds
+    # this manual session into it -- the reachable identity for /day/{day}/entreno/{source_id} is
+    # then the watch row's own source_id (entreno_sesion.actividad's merged-identity contract,
+    # BODY-ENTRENO-VINCULO-1 ruling 3), never the manual id that merged away.
+    reloj = conn.execute(
+        "SELECT source_id FROM activity WHERE person_id = 1 AND day = ? AND vinculo_manual = ?",
+        (day, source_id),
+    ).fetchone()
+    if reloj is not None:
+        source_id = reloj["source_id"]
     # BODY-HISTORIA-VIDA-2: demo._seed() already seeds two practicas (body/demo.py's own
     # _seed_practicas, BODY-HISTORIA-VIDA-1 ruling 8) -- the first one picked here for
     # /history/practica/{practica_id}'s own real path.
