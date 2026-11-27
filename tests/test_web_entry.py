@@ -67,6 +67,10 @@ class RouteSetTest(unittest.TestCase):
         ("/comida/productos/agregar", ("GET",)),  # BODY-COMIDA-PRODUCTO-1
         ("/comida/productos/guardar", ("POST",)),  # BODY-COMIDA-PRODUCTO-1
         ("/comida/productos/nuevo", ("POST",)),  # BODY-COMIDA-PRODUCTO-1
+        ("/comida/productos/etiqueta", ("POST",)),  # BODY-ETIQUETA-FOTO-1
+        ("/comida/productos/etiqueta/{propuesta_id}/confirmar", ("POST",)),  # BODY-ETIQUETA-FOTO-1
+        ("/comida/productos/etiqueta/{propuesta_id}/descartar", ("POST",)),  # BODY-ETIQUETA-FOTO-1
+        ("/comida/productos/etiqueta/{propuesta_id}/deshacer", ("POST",)),  # BODY-ETIQUETA-FOTO-1
         ("/day/{day}", ("GET",)),
         ("/day/{day}/entreno/{source_id}", ("GET",)),  # BODY-ENTRENO-VISTA-SESION-1
         ("/day/{day}/noche-inusual/visto", ("POST",)),  # BODY-NOCHE-INUSUAL-1

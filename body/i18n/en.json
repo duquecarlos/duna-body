@@ -1744,5 +1744,13 @@
   "comida.productos.error_vacio": "Add at least one product before saving.",
   "comida.productos.unidad.g": "g",
   "comida.productos.unidad.ml": "ml",
-  "comida.productos.unidad.unidad": "unit"
+  "comida.productos.unidad.unidad": "unit",
+  "comida.productos.etiqueta_boton": "Read a label",
+  "comida.productos.etiqueta_aviso": "The photo goes to the AI provider to read the label. Body keeps only the figures you confirm, never the photo.",
+  "comida.productos.etiqueta_apagada": "The assistant is not turned on yet, so a label photo cannot be read. Turn it on in",
+  "comida.productos.etiqueta_leyendo": "Reading the label…",
+  "comida.productos.etiqueta_error_grande": "That photo is too large.",
+  "comida.productos.etiqueta_error_no_imagen": "That is not a photo.",
+  "comida.productos.etiqueta_error_no_legible": "Body could not read this label. Try a sharper photo, or type it in.",
+  "comida.productos.etiqueta_aplicada": "We created the product from the photo."
 }

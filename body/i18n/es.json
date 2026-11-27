@@ -1744,5 +1744,13 @@
   "comida.productos.error_vacio": "Agrega al menos un producto antes de guardar.",
   "comida.productos.unidad.g": "g",
   "comida.productos.unidad.ml": "ml",
-  "comida.productos.unidad.unidad": "unidad"
+  "comida.productos.unidad.unidad": "unidad",
+  "comida.productos.etiqueta_boton": "Leer etiqueta",
+  "comida.productos.etiqueta_aviso": "La foto va al proveedor de IA para leer la etiqueta. Body guarda solo las cifras que confirmes, nunca la foto.",
+  "comida.productos.etiqueta_apagada": "El asistente todavía no está activado, así que no se puede leer una foto de etiqueta. Actívalo en",
+  "comida.productos.etiqueta_leyendo": "Leyendo la etiqueta…",
+  "comida.productos.etiqueta_error_grande": "Esa foto es demasiado grande.",
+  "comida.productos.etiqueta_error_no_imagen": "Eso no es una foto.",
+  "comida.productos.etiqueta_error_no_legible": "Body no pudo leer esta etiqueta. Intenta con una foto más nítida, o escríbelo a mano.",
+  "comida.productos.etiqueta_aplicada": "Creamos el producto a partir de la foto."
 }

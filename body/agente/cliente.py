@@ -19,8 +19,15 @@ builds and stores:
              | {"tipo": "llamada_herramienta", "id": str, "nombre": str, "parametros": dict}
              | {"tipo": "resultado_herramienta", "id": str, "nombre": str, "resultado": Any}
              | {"tipo": "resultado_herramienta", "id": str, "nombre": str, "error": str}
+             | {"tipo": "imagen", "media_type": str, "datos_b64": str}
     herramienta = {"nombre": str, "descripcion": str, "parametros": <JSON schema dict>}
 Each adapter converts this shape to and from its vendor's own wire format.
+
+BODY-ETIQUETA-FOTO-1: the "imagen" block (ORCH-CARLOS-DELEGATES-TIER-1-1's one approved use of a
+photo through this module) carries a client-re-encoded JPEG, already under the picker's own size
+cap -- this module never re-checks size or re-encodes, only converts the SAME base64 bytes to each
+vendor's own image content shape. Sent only by a 'usuario' message, built only by body/rutas/
+comida.py's own label-read route, never by body/agente/bucle.py's own chat loop.
 """
 from __future__ import annotations
 
@@ -110,6 +117,9 @@ def _contenido_anthropic(bloques: list[dict]) -> list[dict]:
             if "error" in b:
                 bloque_result["is_error"] = True
             content.append(bloque_result)
+        elif b["tipo"] == "imagen":
+            content.append({"type": "image",
+                             "source": {"type": "base64", "media_type": b["media_type"], "data": b["datos_b64"]}})
     return content
 
 
@@ -186,6 +196,9 @@ def _items_openai(mensajes: list[dict]) -> list[dict]:
                               "arguments": json.dumps(b["parametros"], ensure_ascii=False)})
             elif b["tipo"] == "resultado_herramienta":
                 items.append({"type": "function_call_output", "call_id": b["id"], "output": _texto_resultado(b)})
+            elif b["tipo"] == "imagen":
+                items.append({"role": "user", "content": [
+                    {"type": "input_image", "image_url": f"data:{b['media_type']};base64,{b['datos_b64']}"}]})
     return items
 
 
@@ -259,6 +272,8 @@ def _partes_gemini(bloques: list[dict]) -> list[dict]:
         elif b["tipo"] == "resultado_herramienta":
             respuesta = {"error": b["error"]} if "error" in b else {"resultado": b["resultado"]}
             partes.append({"functionResponse": {"name": b["nombre"], "response": respuesta}})
+        elif b["tipo"] == "imagen":
+            partes.append({"inlineData": {"mimeType": b["media_type"], "data": b["datos_b64"]}})
     return partes
 
 
@@ -337,6 +352,13 @@ _DEMO_RESPUESTA = (
 )
 
 
+#  BODY-ETIQUETA-FOTO-1: the demo's own fixed, invented label -- never a real product or a real
+#  figure -- returned as a crear_producto tool call the instant round one's own message carries
+#  an "imagen" block, so /comida/productos' own label-read flow runs offline in the demo too.
+_DEMO_ETIQUETA = {"nombre": "Galleta de avena (demo)", "marca": "Marca Demo", "tamano_neto": 30,
+                   "tamano_unidad": "g", "nutrientes": {"kcal": 140, "protein_g": 2, "carbs_g": 18, "fat_g": 6}}
+
+
 class Demo(Proveedor):
     """A scripted two-round exchange: round one asks for `leer_ajustes` (the one read tool that
     exists at every nivel_datos), round two answers with fixed, invented Spanish text -- never a
@@ -344,7 +366,11 @@ class Demo(Proveedor):
 
     BODY-ASISTENTE-PROPUESTAS-1 decision 8: when the question contains "idioma", round one calls
     `proponer_idioma` (toward "en", the simplest "other language" a stateless demo can target) so
-    the orchestrator can measure the proposal card in a browser."""
+    the orchestrator can measure the proposal card in a browser.
+
+    BODY-ETIQUETA-FOTO-1: round one's own message carrying an "imagen" block (never built by the
+    chat loop, only by the label-read route) short-circuits straight to a fixed crear_producto
+    call -- this flow is one request, never a second round."""
 
     def __init__(self):
         self._ronda = 0
@@ -353,6 +379,9 @@ class Demo(Proveedor):
         self._ronda += 1
         if self._ronda == 1:
             ultima = mensajes[-1]["bloques"] if mensajes else []
+            if any(b.get("tipo") == "imagen" for b in ultima):
+                return Respuesta(bloques=[LlamadaHerramienta("demo_1", "crear_producto", dict(_DEMO_ETIQUETA))],
+                                  motivo_fin="tool_use", uso=Uso())
             pregunta = "".join(b.get("texto", "") for b in ultima if b.get("tipo") == "texto")
             if "idioma" in pregunta.lower():
                 return Respuesta(bloques=[LlamadaHerramienta("demo_1", "proponer_idioma", {"lang": "en"})],

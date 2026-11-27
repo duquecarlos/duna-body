@@ -420,6 +420,10 @@ table.parts td.p-0{padding:0}
 .block{display:block}
 .plan li.block{display:block}
 .inline-flex{display:inline-flex}
+/* BODY-ETIQUETA-FOTO-1: comida_productos.html's own label-read preview thumbnail. Declared
+   before .hidden below so the two classes together (an initially-hidden preview) still hide --
+   same specificity, source order decides, and .hidden must win. */
+.etiqueta-preview{display:block;max-width:220px;max-height:220px;border-radius:8px;margin-top:8px}
 .hidden{display:none}
 .no-underline{text-decoration:none}
 .text-right{text-align:right}

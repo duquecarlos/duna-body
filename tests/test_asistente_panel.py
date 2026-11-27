@@ -14,7 +14,10 @@ from fastapi.testclient import TestClient
 from tests._rutas import rutas_planas
 
 from body import config, db, goals, identity, web
-from body.rutas import comun
+from body.agente import conversacion as agente_conversacion
+from body.agente import herramientas
+from body.i18n import T
+from body.rutas import asistente, comun
 
 # Routes that answer with something other than a signed-in base.html page: a non-HTML API, a
 # static asset, a liveness check, or sign-in/consent plumbing the assistant never mounts on.
@@ -325,6 +328,43 @@ class ConversacionEndpointTest(unittest.TestCase):
         web.app.dependency_overrides[identity.current_person_id] = lambda: 2
         r = self.client.get(f"/asistente/conversacion/{cid}")
         self.assertEqual(r.status_code, 404)
+
+
+class CrearProductoTarjetaTest(unittest.TestCase):
+    """BODY-ETIQUETA-FOTO-1 ruling 6: `_tarjeta_crear_producto` now shows every nutrient the
+    proposal carries, in the catalogue's own fixed order -- a misread or an invented figure must
+    be visible on the chat panel's own card too, not only on the picker's editable confirm card."""
+
+    def setUp(self):
+        self.conn, self.orig_db_path = _reset_db()
+        self.addCleanup(self.conn.close)
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.cid = agente_conversacion.crear(self.conn, 1)
+        self.defs = comun._defs(self.conn)
+
+    def _registro(self, **params):
+        out = herramientas.ejecutar(self.conn, 1, "crear_producto", params, "ninguno", self.cid)
+        return out["_registro"]
+
+    def test_no_nutrients_shows_only_name_and_brand_as_before(self):
+        tarjeta = asistente._tarjeta_propuesta(T("es"), self.defs, self._registro(nombre="Galleta", marca="Demo"))
+        self.assertIn("Galleta · Demo", tarjeta["despues"])
+        self.assertNotIn("Calorías", tarjeta["despues"])
+
+    def test_nutrients_now_show_in_catalogue_order_never_hidden(self):
+        tarjeta = asistente._tarjeta_propuesta(T("es"), self.defs, self._registro(
+            nombre="Galleta", tamano_unidad="g", nutrientes={"protein_g": 2, "kcal": 140}))
+        despues = tarjeta["despues"]
+        self.assertIn("Calorías", despues)
+        self.assertIn("140", despues)
+        self.assertIn("Proteína", despues)
+        self.assertIn("2", despues)
+        self.assertLess(despues.index("Calorías"), despues.index("Proteína"))
+
+    def test_an_unread_field_the_model_left_out_never_appears_invented(self):
+        tarjeta = asistente._tarjeta_propuesta(T("es"), self.defs, self._registro(
+            nombre="Galleta", tamano_unidad="g", nutrientes={"kcal": 140}))
+        self.assertNotIn("Proteína", tarjeta["despues"])
 
 
 if __name__ == "__main__":
