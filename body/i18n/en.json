@@ -1082,7 +1082,7 @@
   "trends.ayuno.ventana": "Before training, your typical fast lasts {horas}.",
   "trends.ayuno.faltan": "Body needs more meals logged before your sessions to compare this.",
   "trends.ayuno.fila_en_ayunas": "Fasted: {valor}",
-  "trends.ayuno.fila_alimentado": "Ate before: {valor}",
+  "trends.ayuno.fila_alimentado": "Ate beforehand: {valor}",
   "fuente.personal_commute.label": "Daily commute summary",
   "fuente.nunca": "No commute data yet. It comes from your personal desk.",
   "fuente.frescura": "Data up to {fecha} · imported {fecha_imp}",
