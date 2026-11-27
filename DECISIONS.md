@@ -36634,3 +36634,108 @@ slice's own work.
 **Merge sha:** `a5fc33175dc5fe49409e6a40008b0cc4dee102fd` (tree
 `9e089da0bb4ca4b21c0d64c1f62498f8349768ef`, identical to the branch's own tree -- empty diff,
 confirmed rather than re-gated).
+
+## BODY-HOY-LO-QUE-VENCE-1 / BODY-HOY-LO-QUE-VENCE-1.W -- Hoy's own "coming due" strip, finished and merged
+
+BODY-HOY-LO-QUE-VENCE-1 built `body/vence.py` (`VENCE_MODELO`, `lineas()`) and Hoy's own "Por
+vencer" card below the readiness hero at `52601ed`, then stopped BLOCKED, correctly, before
+merging: the full gate had never run, and `tests/test_demo.py:469` still asserted the plan-card
+wording the slice's own ruling 2 removes. BODY-HOY-LO-QUE-VENCE-1.W (ORCH-CARLOS-DELEGATES-TIER-1-1,
+approved to merge) decided the two open questions, restored every red test's subject, ran the
+whole gate, and merges both slices together.
+
+**The module.** `body/vence.py`'s `VENCE_MODELO` (`version: "vence-v1"`, `max_lineas: 4`,
+`horizonte_dias: 14`, `horizontes_max: 2`) and its one entry point, `lineas(conn, person_id, hoy,
+*, mcp_pendientes, cobertura_pendientes, cadencia, ids_extra)`, gather every dated fact Body knows
+that Hoy does not already show elsewhere: an mcp proposal still waiting (its own soonest
+`expira_en`), a missing daily/weekly log stream (`registro_cobertura`'s own cadence), a plan
+horizon's checkpoint/deadline beyond the plan card's own `PLANES_HOY_MAX` cap, and an active
+metric goal's deadline inside the horizon. Sorted overdue-first, then today, then soonest,
+ascending by date within each state. `body/rutas/hoy.py`'s `_vence_ctx` renders it as one card, at
+most 4 lines with a "+N more" overflow, no card at all when nothing is due.
+
+**In the strip, and why.** mcp proposal, missing log stream, horizon checkpoint/deadline beyond
+the plan card's cap, metric-goal deadline -- each a dated fact with no other home on Hoy.
+
+**Left out of the strip, and why** (now in `body/vence.py`'s own module docstring): shared-meal
+portions and shift imports carry no date to sort by; the pain follow-up and the "still going?"
+period check are already their own interactive cards; a future plan session belongs to Metas' own
+week view; the night-shift week's card stays as it is (a recovery estimate, not a date fact the
+strip would be the only place to say); and (BODY-HOY-LO-QUE-VENCE-1.W ruling 3, same reasoning as
+BODY-HOY-PENDIENTES-REGISTRO-1 ruling 3) the sleep stream -- a missing night is the watch's own
+sync problem, already Hoy's own sync card, never this strip's to repeat.
+
+**Cards removed by the original slice, their fact now in the strip instead:** the standalone
+mcp-proposal aviso banner (`today.html`'s old "Tu asistente personal te propone N cambio(s) ·
+Revisar" block) and the plan card's own trailing "Para tu plan falta registrar hoy: ..." note --
+each fact now shows once, in "Por vencer", with its own link, never duplicated.
+
+**Ruling 2 of .W -- the strip's own relative time, `vence.cuando(t, dia, hoy)`.** A new pure
+function in `body/vence.py`, used by the strip alone -- `body/rutas/hoy.py`'s existing
+`_dia_relativo` is left unchanged (it only ever looks backward, hoy/ayer, falling back to an
+absolute date otherwise, and other screens depend on exactly that). `cuando` is bidirectional: 0
+days is "hoy"/"today", +1 "mañana"/"tomorrow", -1 "ayer"/"yesterday", otherwise the n-days form
+("en {n} días"/"in {n} days", "hace {n} días"/"{n} days ago"), literal `t(...)` calls only, never
+an absolute date however far `dia` falls -- the gap the orchestrator's grep found (a line 5 days
+out would have shown a bare date). Seven new keys in both `body/i18n/es.json` and `en.json`:
+`vence.cuando.hoy`, `.manana`, `.ayer`, `.en_dias_one`/`.en_dias_other`,
+`.hace_dias_one`/`.hace_dias_other` (the `_one` forms follow the app's own singular/plural
+convention; they cannot fire through `cuando` today since a 1-day gap always reads as mañana/ayer
+first). `hoy.py`'s `_vence_ctx` now builds each line's `tiempo` from `vence.cuando` instead of
+`_dia_relativo`.
+
+**Ruling 3 of .W -- the sleep stream, named in the docstring.** Done above; no code change (the
+original slice's `_lineas_cobertura` already dropped `sueno` before a label was ever looked up).
+
+**Ruling 4 of .W -- every red that asserted the removed wording, fixed by restoring the subject.**
+Two tests outside the original touches were red on `main`-plus-branch, both because they asserted
+the exact wording the original slice's rulings removed:
+- `tests/test_demo.py` `DemoHoyPendientesTest.test_hoy_shows_the_pendientes_line_in_spanish` --
+  asserted the removed plan-card note (`"Para tu plan falta registrar hoy:"`). Fixed to assert the
+  same fact (protein not logged today) in the strip instead: `"Por vencer"`, `"Falta registrar
+  proteína esta semana"`, with its own `href="#asis-btn"` link.
+- `tests/test_mcp_visible.py` `HoyLineaTest` (three cases) -- asserted the removed standalone mcp
+  aviso banner (`"Tu asistente personal te propone N cambio(s) · Revisar"`). Fixed to assert the
+  same fact in the strip: `"Por vencer"`, `"Tu asistente tiene {n} propuesta(s) esperando"`, same
+  link. The "no line" and 24h-aplicado cases in the same file were already correct (they test a
+  different, still-existing aviso) and are unchanged.
+Every other candidate the orchestrator's grep named --
+`tests/test_turnos_opcional_5.py`, `tests/test_hogar_aplica_aviso.py`, `tests/test_hogar_miembro_1.py`,
+`tests/test_mcp_visible.py`'s own `HoyAplicadoLineaTest`/`PanelDefaultTest` -- needed nothing: each
+asserts an unrelated "proponer"/"aplicó" fact the branch never touched, confirmed by running every
+one of them green on the final tree.
+
+**Tests added**, `tests/test_vence.py`: `CuandoTest` (today/tomorrow/yesterday/n-days-ahead/
+n-days-overdue, es and en, proving the strip never falls back to an absolute date) and one
+assertion added to the existing `CapTest.test_card_shows_exactly_four_then_plus_n_more` checking
+each shown line's own `tiempo` text end to end through `hoy._vence_ctx`.
+
+**Statement counts.** No SQL changed by .W -- `cuando()` is pure (one `date.fromisoformat`, no
+query). `/`'s own ceiling stays the original slice's 208 (160 measured, `ceil(160*1.3)=208`,
+`tests/test_rendimiento.py`); unaffected by this slice's work.
+
+**Customer bytes, both slices together.** Added: `vence.titulo` ("Por vencer"/"Coming due"),
+`vence.mas_one`/`_other`, `vence.linea.mcp_one`/`_other`, `vence.linea.cobertura`,
+`vence.linea.checkpoint`, `vence.linea.deadline` (original slice); `vence.cuando.hoy`, `.manana`,
+`.ayer`, `.en_dias_one`/`_other`, `.hace_dias_one`/`_other` (.W, this slice). Removed: the old
+standalone mcp-proposal aviso banner's own key and the plan card's old trailing pendientes-note
+key (both superseded by `vence.linea.*` inside the strip; the original slice's own i18n diff).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, the whole suite, run in 22
+foreground chunks (20-module groups for most of the suite, 5-module groups for `test_garmin_*`,
+4-module groups for `test_host_*`): 422, 524, 377, 475, 167, 70, 143, 214, 467, 184, 264, 270, 267,
+228, 340, 281, 218, 148, 165, 305, 284, 198. **6011 tests, every chunk green** (one pre-existing
+`expectedFailure` seen in chunk 1 and one pre-existing `skipped` seen in chunk 2, both reported as
+part of that chunk's own "OK", neither touched by this slice), summing exactly to a collect-only
+count of **6011** taken on the same final tree via
+`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()` before the chunks
+ran.
+
+No password, token, session secret or health figure was read, printed, or written anywhere in
+this slice's own work.
+
+**Open followups.** BODY-HOY-LO-QUE-VENCE-1-MCP (named by the original slice, not this one): a
+widened or follow-on MCP-proposal view was out of scope for both slices and is left for whoever
+picks it up next.
+
+**Merge.** `git switch main`; `git merge --no-ff feat/body-hoy-lo-que-vence-1`.
