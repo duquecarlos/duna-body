@@ -2666,22 +2666,69 @@ def ensure_ready(conn: sqlite3.Connection) -> None:
         _READY_FILES.add(key)
 
 
+# BODY-ENTRENO-VINCULO-2 ruling 2: a manual note of the same workout is logged near it; a morning
+# session and an evening one are two workouts. Versioned so a later slice can change the window
+# without silently changing old behaviour's meaning.
+VINCULO_MODELO = {"version": "vinculo-v2", "max_diferencia_min": 180}
+
+
+def _dentro_de_ventana_vinculo(a: str | None, b: str | None) -> bool:
+    """BODY-ENTRENO-VINCULO-2 ruling 2: true when either side has no `start_local` (the day-only
+    rule governs, as before this slice) or the two starts are at most VINCULO_MODELO's own
+    `max_diferencia_min` apart. Shared by both linking directions so they can never disagree."""
+    if a is None or b is None:
+        return True
+    diferencia_min = abs((datetime.fromisoformat(a) - datetime.fromisoformat(b)).total_seconds()) / 60
+    return diferencia_min <= VINCULO_MODELO["max_diferencia_min"]
+
+
 def _enlazar_sesion_manual_unica(conn: sqlite3.Connection, person_id: int, day: str, source: str,
-                                  source_id: str) -> None:
+                                  source_id: str, start_local: str | None) -> None:
     """BODY-ENTRENO-VINCULO-1 ruling 2: called right after a watch strength-training row is synced
     (and only when that row is not already linked or marked split). Links it to that same day's one
     manual session, but ONLY when there is EXACTLY one manual session that day no other watch row
-    already links -- two candidates, or zero, leave it unlinked rather than guess."""
+    already links -- two candidates, or zero, leave it unlinked rather than guess. BODY-ENTRENO-
+    VINCULO-2 ruling 2: that one candidate must also fall inside VINCULO_MODELO's time window
+    whenever both sessions carry a `start_local`."""
     candidatas = conn.execute(
-        "SELECT source_id FROM activity WHERE person_id = ? AND day = ? AND source = 'manual' AND "
-        "source_id NOT IN (SELECT vinculo_manual FROM activity WHERE person_id = ? AND "
-        "vinculo_manual IS NOT NULL)",
+        "SELECT source_id, start_local FROM activity WHERE person_id = ? AND day = ? AND "
+        "source = 'manual' AND source_id NOT IN (SELECT vinculo_manual FROM activity WHERE "
+        "person_id = ? AND vinculo_manual IS NOT NULL)",
         (person_id, day, person_id),
     ).fetchall()
-    if len(candidatas) == 1:
+    if len(candidatas) == 1 and _dentro_de_ventana_vinculo(start_local, candidatas[0]["start_local"]):
         conn.execute(
             "UPDATE activity SET vinculo_manual = ? WHERE person_id = ? AND source = ? AND source_id = ?",
             (candidatas[0]["source_id"], person_id, source, source_id),
+        )
+
+
+def _enlazar_reloj_unico(conn: sqlite3.Connection, person_id: int, day: str, manual_source_id: str,
+                          manual_start_local: str | None) -> None:
+    """BODY-ENTRENO-VINCULO-2 ruling 1: the mirror of `_enlazar_sesion_manual_unica`, for a manual
+    session logged AFTER the watch's own strength row already synced -- the direction
+    BODY-ENTRENO-VINCULO-2-INV found unlinked. Links the new manual session to that day's one
+    unlinked, unseparated watch `strength_training` row, but ONLY when this manual session is
+    ALSO the day's only unlinked manual session (so both directions agree on the same pair) and
+    the pair falls inside VINCULO_MODELO's time window (ruling 2) -- two watch candidates, two
+    manual candidates, or zero of either, leave it unlinked rather than guess."""
+    otra_manual_sin_enlazar = conn.execute(
+        "SELECT 1 FROM activity WHERE person_id = ? AND day = ? AND source = 'manual' AND "
+        "source_id != ? AND source_id NOT IN (SELECT vinculo_manual FROM activity WHERE "
+        "person_id = ? AND vinculo_manual IS NOT NULL)",
+        (person_id, day, manual_source_id, person_id),
+    ).fetchone()
+    if otra_manual_sin_enlazar is not None:
+        return
+    candidatas = conn.execute(
+        "SELECT source, source_id, start_local FROM activity WHERE person_id = ? AND day = ? AND "
+        "type = 'strength_training' AND vinculo_manual IS NULL AND vinculo_separado = 0",
+        (person_id, day),
+    ).fetchall()
+    if len(candidatas) == 1 and _dentro_de_ventana_vinculo(manual_start_local, candidatas[0]["start_local"]):
+        conn.execute(
+            "UPDATE activity SET vinculo_manual = ? WHERE person_id = ? AND source = ? AND source_id = ?",
+            (manual_source_id, person_id, candidatas[0]["source"], candidatas[0]["source_id"]),
         )
 
 
@@ -2804,7 +2851,7 @@ def save_day(conn: sqlite3.Connection, day_data, person_id: int) -> None:
                  "vinculo_manual": vinculo_manual, "vinculo_separado": vinculo_separado},
             )
             if a.get("type") == "strength_training" and vinculo_manual is None and not vinculo_separado:
-                _enlazar_sesion_manual_unica(conn, person_id, d, src, a["source_id"])
+                _enlazar_sesion_manual_unica(conn, person_id, d, src, a["source_id"], a["start_local"])
 
 
 def load_day(conn: sqlite3.Connection, day: str, person_id: int) -> dict:
@@ -3473,6 +3520,10 @@ def create_manual_session(conn: sqlite3.Connection, person_id: int, day: str, st
             "VALUES (?, ?, ?, ?, NULL, ?, ?, NULL, NULL, NULL, NULL, 'manual')",
             (person_id, source_id, day, start_local, title, duration_s),
         )
+        # BODY-ENTRENO-VINCULO-2 ruling 1: the mirror of save_day's own watch-side auto-link, for
+        # the direction BODY-ENTRENO-VINCULO-2-INV found unlinked -- a manual session logged AFTER
+        # the watch's own strength row already synced.
+        _enlazar_reloj_unico(conn, person_id, day, source_id, start_local)
     return source_id
 
 

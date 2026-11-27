@@ -108,10 +108,14 @@ def _seed_todo(conn) -> dict:
     manual_m2 = db.create_manual_session(conn, 1, ids["dia_a2"], f"{ids['dia_a2']}T08:00:00", "Sesión manual m2")
     db.set_vinculo_manual(conn, 1, "garmin", "a2", manual_m2, False)
 
-    # unir_sesiones: a watch session and a manual one on the same day, still unlinked.
+    # unir_sesiones: a watch session and a manual one on the same day, still unlinked -- the watch
+    # row is marked vinculo_separado = 1 BEFORE the manual insert (BODY-ENTRENO-VINCULO-2) because
+    # create_manual_session now auto-links a same-day, in-window pair on its own, and this fixture's
+    # subject is an unlinked pair for unir_sesiones to join at :223.
     ids["dia_a3"] = "2020-04-15"
     _actividad(conn, "garmin", "a3", ids["dia_a3"])
     conn.commit()
+    db.set_vinculo_manual(conn, 1, "garmin", "a3", None, True)
     db.create_manual_session(conn, 1, ids["dia_a3"], f"{ids['dia_a3']}T08:00:00", "Sesión manual m3")
 
     # corregir_despertar: a Garmin sleep session to correct against.

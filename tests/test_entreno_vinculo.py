@@ -39,12 +39,12 @@ def _cid(conn, person_id: int = 1) -> int:
 
 
 def _watch_day_data(day: str, source_id: str = "w1", avg_hr: float = 120.0, duration_s: float = 1800.0,
-                     name: str | None = None) -> garmin_adapter.DayData:
+                     name: str | None = None, start_local: str | None = None) -> garmin_adapter.DayData:
     return garmin_adapter.DayData(
         day=day,
-        activities=[{"source_id": source_id, "start_local": f"{day}T18:00:00", "type": "strength_training",
-                     "name": name, "duration_s": duration_s, "distance_m": None, "avg_hr": avg_hr,
-                     "max_hr": avg_hr + 20, "calories": 300.0}],
+        activities=[{"source_id": source_id, "start_local": start_local or f"{day}T18:00:00",
+                     "type": "strength_training", "name": name, "duration_s": duration_s,
+                     "distance_m": None, "avg_hr": avg_hr, "max_hr": avg_hr + 20, "calories": 300.0}],
     )
 
 
@@ -218,6 +218,130 @@ class SaveDayLinkingTest(unittest.TestCase):
         self.assertIsNone(reloj["vinculo_manual"])
         self.assertEqual(reloj["vinculo_separado"], 1)
         self.assertEqual(reloj["avg_hr"], 140.0)
+
+    def test_links_at_180_minutes_apart(self):
+        manual_id = db.create_manual_session(self.conn, 1, "2026-11-10", "2026-11-10T15:00:00", "Fuerza")
+        db.save_day(self.conn, _watch_day_data("2026-11-10", start_local="2026-11-10T18:00:00"), 1)
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source = 'garmin' AND source_id = 'w1'"
+        ).fetchone()
+        self.assertEqual(reloj["vinculo_manual"], manual_id)
+
+    def test_does_not_link_at_181_minutes_apart(self):
+        db.create_manual_session(self.conn, 1, "2026-11-10", "2026-11-10T14:59:00", "Fuerza")
+        db.save_day(self.conn, _watch_day_data("2026-11-10", start_local="2026-11-10T18:00:00"), 1)
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source = 'garmin' AND source_id = 'w1'"
+        ).fetchone()
+        self.assertIsNone(reloj["vinculo_manual"])
+
+
+class ManualAfterWatchLinkingTest(unittest.TestCase):
+    """BODY-ENTRENO-VINCULO-2 ruling 1: the mirror direction -- a manual session logged AFTER the
+    watch's own strength row already synced links through `create_manual_session`, symmetric to
+    `SaveDayLinkingTest` above, including the same time window (ruling 2)."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+
+    def test_watch_then_manual_links(self):
+        db.save_day(self.conn, _watch_day_data("2026-11-10"), 1)
+        manual_id = db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source = 'garmin' AND source_id = 'w1'"
+        ).fetchone()
+        self.assertEqual(reloj["vinculo_manual"], manual_id)
+
+    def test_no_start_time_on_the_manual_session_still_links_by_day(self):
+        db.save_day(self.conn, _watch_day_data("2026-11-10", start_local="2026-11-10T18:00:00"), 1)
+        manual_id = db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source = 'garmin' AND source_id = 'w1'"
+        ).fetchone()
+        self.assertEqual(reloj["vinculo_manual"], manual_id)
+
+    def test_links_at_180_minutes_apart(self):
+        db.save_day(self.conn, _watch_day_data("2026-11-10", start_local="2026-11-10T18:00:00"), 1)
+        manual_id = db.create_manual_session(self.conn, 1, "2026-11-10", "2026-11-10T15:00:00", "Fuerza")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source = 'garmin' AND source_id = 'w1'"
+        ).fetchone()
+        self.assertEqual(reloj["vinculo_manual"], manual_id)
+
+    def test_does_not_link_at_181_minutes_apart(self):
+        db.save_day(self.conn, _watch_day_data("2026-11-10", start_local="2026-11-10T18:00:00"), 1)
+        db.create_manual_session(self.conn, 1, "2026-11-10", "2026-11-10T14:59:00", "Fuerza")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source = 'garmin' AND source_id = 'w1'"
+        ).fetchone()
+        self.assertIsNone(reloj["vinculo_manual"])
+
+    def test_two_watch_candidates_no_link(self):
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 'w1', '2026-11-10', '2026-11-10T07:00:00', 'strength_training', NULL, 'garmin')"
+        )
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 'w2', '2026-11-10', '2026-11-10T18:00:00', 'strength_training', NULL, 'garmin')"
+        )
+        self.conn.commit()
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza")
+        rows = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND day = '2026-11-10' AND "
+            "type = 'strength_training'"
+        ).fetchall()
+        self.assertTrue(all(r["vinculo_manual"] is None for r in rows))
+
+    def test_two_manual_candidates_no_link(self):
+        # Both manual sessions logged BEFORE any watch row exists, so neither can have claimed it
+        # yet; the watch row is then inserted directly (bypassing save_day's own auto-link, like
+        # UnirSesionesTest does) so a third manual session finds two already-unlinked candidates.
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza 1")
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza 2")
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (1, 'w1', '2026-11-10', '2026-11-10T18:00:00', 'strength_training', NULL, 'garmin')"
+        )
+        self.conn.commit()
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza 3")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source_id = 'w1'"
+        ).fetchone()
+        self.assertIsNone(reloj["vinculo_manual"])
+
+    def test_already_linked_watch_row_no_link(self):
+        old_manual_id = db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza vieja")
+        db.save_day(self.conn, _watch_day_data("2026-11-10"), 1)
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza nueva")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 1 AND source_id = 'w1'"
+        ).fetchone()
+        self.assertEqual(reloj["vinculo_manual"], old_manual_id)
+
+    def test_split_watch_row_no_link(self):
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza vieja")
+        db.save_day(self.conn, _watch_day_data("2026-11-10"), 1)
+        db.set_vinculo_manual(self.conn, 1, "garmin", "w1", None, True)
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza nueva")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual, vinculo_separado FROM activity WHERE person_id = 1 AND source_id = 'w1'"
+        ).fetchone()
+        self.assertIsNone(reloj["vinculo_manual"])
+        self.assertEqual(reloj["vinculo_separado"], 1)
+
+    def test_different_persons_rows_no_link(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Otra persona')")
+        self.conn.execute(
+            "INSERT INTO activity (person_id, source_id, day, start_local, type, name, source) "
+            "VALUES (2, 'w1', '2026-11-10', '2026-11-10T18:00:00', 'strength_training', NULL, 'garmin')"
+        )
+        self.conn.commit()
+        db.create_manual_session(self.conn, 1, "2026-11-10", None, "Fuerza")
+        reloj = self.conn.execute(
+            "SELECT vinculo_manual FROM activity WHERE person_id = 2 AND source_id = 'w1'"
+        ).fetchone()
+        self.assertIsNone(reloj["vinculo_manual"])
 
 
 class WatchFirstUnchangedTest(unittest.TestCase):
