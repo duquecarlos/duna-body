@@ -266,6 +266,79 @@ class HoyTopBlockCssTest(unittest.TestCase):
         self.assertNotIn(',[data-ancho="lectura"].hoy-top', self.compact)
 
 
+class ShiftsTrendsFiguraCompactaCssTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: finding 15 of the earlier revision, finished --
+    Shifts and Trends render the figure full-card-width, with no `.hoy-top` grid to bound it, so
+    Hoy's own 78vh/720px desktop cap still left it filling the first screen there. Checked as CSS
+    text, the same way HoyTopBlockCssTest above checks Hoy's own cap."""
+
+    def setUp(self):
+        self.css = CSS.read_text(encoding="utf-8")
+        self.compact = self.css.replace(" ", "").replace("\n", "")
+
+    def test_custom_property_defined(self):
+        self.assertIn("--hoy-figura-compacta-max:min(46svh,420px)", self.compact)
+
+    def test_desktop_cap_present_and_uses_the_named_property(self):
+        self.assertIn(
+            ".hoy-figura-compacta.cuerpo-vista-track{max-height:var(--hoy-figura-compacta-max)}",
+            self.compact)
+        self.assertIn(
+            ".hoy-figura-compacta.cuerpo3d-track{max-height:var(--hoy-figura-compacta-max)}",
+            self.compact)
+
+    def test_desktop_cap_sits_inside_the_768_query(self):
+        idx = self.compact.index(".hoy-figura-compacta.cuerpo-vista-track{max-height:var(--hoy-figura-compacta-max)}")
+        media = self.compact.rindex("@media(min-width:768px){", 0, idx)
+        self.assertGreater(idx, media)
+
+    def test_no_phone_rule_added_for_the_compacta_modifier(self):
+        """Ruling 1's last sentence: under 768px nothing changes -- Shifts/Trends keep inheriting
+        the plain `.hoy-figura` mobile cap (HoyTopBlockCssTest's own phone_cap test), and no
+        `.hoy-figura-compacta` rule exists outside the >=768px block."""
+        self.assertNotIn("max-width:767.98px){.hoy-figura-compacta", self.compact)
+
+
+class ShiftsTrendsFiguraCompactaMarkupTest(unittest.TestCase):
+    """The modifier class the CSS rule above needs actually renders on both screens, alongside
+    (never instead of) `hoy-figura`, which the mobile cap and `object-fit:contain` still rely on."""
+
+    def setUp(self):
+        self.conn = _reset_db(self)
+
+    def test_shifts_renders_both_classes(self):
+        pid = _mk_person(self.conn)
+        db.set_trabaja_turnos(self.conn, True, pid)
+        self.conn.commit()
+        _use(pid)
+        r = client.get("/shifts")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("hoy-figura hoy-figura-compacta", r.text)
+
+    def test_trends_renders_both_classes(self):
+        pid = _mk_person(self.conn)
+        for i in range(20):
+            d = (fechas.hoy_local(db.person(self.conn, pid)) - timedelta(i)).isoformat()
+            db.set_metric(self.conn, d, "resting_hr", 55.0, "garmin", pid)
+        self.conn.commit()
+        _use(pid)
+        r = client.get("/trends")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("hoy-figura hoy-figura-compacta", r.text)
+
+    def test_hoy_itself_never_carries_the_compacta_modifier(self):
+        """Hoy's own figure sits inside `.hoy-top`'s grid, which already bounds it -- the compacta
+        cap is Shifts/Trends' own, never applied to Hoy."""
+        pid = _mk_person(self.conn)
+        db.set_metric(self.conn, fechas.hoy_local(db.person(self.conn, pid)).isoformat(),
+                      "resting_hr", 55.0, "garmin", pid)
+        self.conn.commit()
+        _use(pid)
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("hoy-figura-compacta", r.text)
+
+
 def _seed_full_coverage(tc: unittest.TestCase) -> "db.sqlite3.Connection":
     """A demo-seeded person (id 1): has an unusual night (`Body noticed`), an upcoming night
     block (`Night week ahead`) and a live nutrient target (`objetivos_nutriente`), so every

@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, identity, profile, turnos_costo, viajes
+from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, graficos_eje, identity, profile, turnos_costo, viajes
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -220,19 +220,13 @@ _RACHA_PLOT_H = 84
 _RACHA_TICK_H = 6  # the night-shift tick strip under the bars
 # BODY-TENDENCIAS-RACHA-GRAFICO-1-M2 (step 3): the month axis, drawn as <text> inside the svg
 # itself instead of an HTML row under it, at the app's own small-text floor (body.css's ".tick"
-# class, the same one body/rutas/turnos.py's axis labels use).
-_RACHA_LABEL_FONT = 12.0
-_RACHA_CHAR_W = 0.6 * _RACHA_LABEL_FONT  # same character-count approximation as turnos.py's own
-                                          # _PERFIL_CHAR_W, since real glyph metrics are not
-                                          # available server-side
+# class, the same one body/rutas/turnos.py's axis labels use, through the shared
+# body/graficos_eje.py -- ORCH-CARLOS-DELEGATES-TIER-1-1, replacing this module's own former
+# byte-for-byte copy of the same character-count approximation).
 _RACHA_LABEL_GAP_X = 8.0   # minimum clear gap kept between two adjacent month labels' own boxes
 _RACHA_EDGE_PAD = 2.0      # inside the viewBox's own left/right edge
 _RACHA_LABEL_H = 16        # height reserved below the tick strip for the month-label row
 _RACHA_LABEL_BASELINE = 12  # the label text's own baseline, within that reserved row
-
-
-def _racha_label_px(s: str) -> float:
-    return len(s) * _RACHA_CHAR_W
 
 
 def _racha_eje(t: T, semanas: list[dict], bw: float) -> list[dict]:
@@ -269,23 +263,23 @@ def _racha_eje(t: T, semanas: list[dict], bw: float) -> list[dict]:
     elegidos: list[tuple[float, str]] = [candidatos[0]]
     for idx in range(1, len(candidatos)):
         x, texto = candidatos[idx]
-        mitad = _racha_label_px(texto) / 2
+        mitad = graficos_eje.label_px(texto) / 2
         es_ultimo = idx == len(candidatos) - 1
         if es_ultimo:
             while len(elegidos) > 1:
                 x_prev, texto_prev = elegidos[-1]
-                if x - mitad >= x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
+                if x - mitad >= x_prev + graficos_eje.label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
                     break
                 elegidos.pop()
             elegidos.append((x, texto))
         else:
             x_prev, texto_prev = elegidos[-1]
-            if x - mitad >= x_prev + _racha_label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
+            if x - mitad >= x_prev + graficos_eje.label_px(texto_prev) / 2 + _RACHA_LABEL_GAP_X:
                 elegidos.append((x, texto))
 
     out = []
     for x, texto in elegidos:
-        mitad = _racha_label_px(texto) / 2
+        mitad = graficos_eje.label_px(texto) / 2
         if x - mitad < _RACHA_EDGE_PAD:
             anchor, tx = "start", _RACHA_EDGE_PAD
         elif x + mitad > _RACHA_WIDTH - _RACHA_EDGE_PAD:

@@ -13,7 +13,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from fastapi.testclient import TestClient
 
-from body import config, db, entreno_racha, fechas, goals, identity, web
+from body import config, db, entreno_racha, fechas, goals, graficos_eje, identity, web
 from body.rutas import comun
 from body.rutas import tendencias
 from tests._rutas import contar_sql
@@ -406,15 +406,15 @@ class RachaEjeTest(unittest.TestCase):
     def _revisar(self, etiquetas: list[dict]):
         self.assertLessEqual(len(etiquetas), 4)
         for e in etiquetas:
-            mitad = tendencias._racha_label_px(e["texto"]) / 2
+            mitad = graficos_eje.label_px(e["texto"]) / 2
             izq = e["x"] - mitad if e["anchor"] == "middle" else (
                 e["x"] if e["anchor"] == "start" else e["x"] - 2 * mitad)
             der = izq + 2 * mitad
             self.assertGreaterEqual(izq, -0.01, e)
             self.assertLessEqual(der, tendencias._RACHA_WIDTH + 0.01, e)
         for a, b in zip(etiquetas, etiquetas[1:]):
-            mitad_a = tendencias._racha_label_px(a["texto"]) / 2
-            mitad_b = tendencias._racha_label_px(b["texto"]) / 2
+            mitad_a = graficos_eje.label_px(a["texto"]) / 2
+            mitad_b = graficos_eje.label_px(b["texto"]) / 2
             self.assertLessEqual(a["x"] + mitad_a + tendencias._RACHA_LABEL_GAP_X, b["x"] - mitad_b + 0.01,
                                  f"{a['texto']!r} and {b['texto']!r} are closer than the minimum gap")
 
