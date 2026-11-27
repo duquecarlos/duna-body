@@ -36447,3 +36447,6 @@ both in the foreground: **227 tests, all green**, inherited whole-gate floor **5
 
 **Merge.** `git switch main`; `git merge --no-ff feat/body-ayuno-entreno-1`; branch deleted. No
 deploy, no push.
+
+**Merge sha:** `8b16ed00f06b22ccb098322ecbcd9ded6439a30b` (tree `0017745eb0decb461dd667a3ffafab048af0e09d`,
+identical to the branch's own tree -- empty diff, confirmed rather than re-gated).
