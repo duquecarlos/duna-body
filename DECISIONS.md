@@ -36394,3 +36394,56 @@ defect this diff introduced or is positioned to fix.
 
 **Merge.** `git switch main`; `git merge --no-ff feat/body-revision-graficos-figura-1-b`; branch
 deleted. No deploy, no push.
+
+## BODY-AYUNO-ENTRENO-1 / BODY-AYUNO-ENTRENO-1.W
+
+Fasted-vs-fed: how a training session's own start compares to the person's last logged meal.
+Model `ayuno-entreno-v1`: an 8-hour threshold splits sessions into "fasted" (at or above the
+threshold) and "fed" (under it); a 36-hour look-back from the session's own start is how far back
+a meal is searched for; a session whose nearest-meal gap cannot be determined (no meal within the
+look-back, or none logged at all) is left out of both buckets rather than guessed into either one.
+
+**Where it shows.** The training session page's own note line and comparison card (fasted vs. fed,
+by generic session type), the Trends page's card (same comparison, across the person's whole
+history), and the assistant's `leer_entreno` tool, under its `ayuno` key.
+
+**Statement counts (measured by the dispatching worker, on this same tree, by mocking the new
+entry points' own queries).** The session route: 16 statements before this feature, 16 after --
+the new card and note line are built from data the route's existing queries already fetch, so no
+new statement was added to that path. `/trends`: 21 before, 23 after, a constant +2 regardless of
+how much training or meal history exists, because the new card's own query cost does not scale
+with the pool it reads.
+
+**Deviations accepted.** (1) `body/static/body.css` was not touched -- the new card and note line
+render entirely with CSS classes the page already had; no new style was needed. (2) The "before"
+statement counts above were not taken from a pre-feature commit; they were measured by mocking the
+session route's and `/trends`'s own new entry points out on this same, already-merged tree and
+counting statements with and without them wired in. Both accepted as the honest way to get a
+before/after number once the feature is already on the tree being measured.
+
+**BODY-AYUNO-ENTRENO-1.W, the wording fix.** `trends.ayuno.fila_alimentado` in `body/i18n/en.json`
+read "Ate before: {valor}", while the training session page's own label for the same bucket
+(`entreno_sesion.ayuno.alimentado`) reads "Ate beforehand" -- the two screens disagreed in English.
+Changed to "Ate beforehand: {valor}"; Spanish (`"Con comida antes: {valor}"`) is unchanged. No test
+asserted the old English string, so no test file needed a change.
+
+**Customer bytes.** `BODY-AYUNO-ENTRENO-1` added 16 i18n keys (32 strings, `entreno_sesion.ayuno.*`
+and `trends.ayuno.*`), reviewed and approved by the orchestrator under
+`ORCH-CARLOS-DELEGATES-TIER-1-1` as observational, informal-register, no-advice copy. `.W` changes
+one of those 32 strings (the English `trends.ayuno.fila_alimentado` value above) per that same
+ruling's ruling 2; nothing else in the approved set changed.
+
+**Gate.** Pre-flight confirmed `main` at `b41ca6187bb546cc41e0c7cb5a47eab028f49372` and this
+branch's HEAD at `b70386ae01eadafbe2d9c40c97037b7e4b7cc09d` before this slice's own commit --
+unchanged from the tree `BODY-AYUNO-ENTRENO-1`'s own report measured its whole-gate green 5962 on
+(reconciled there against a collect-only count of 5962), so the whole suite was not re-run. Ran
+`.venv/Scripts/python.exe -m unittest tests.test_i18n_paridad tests.test_registro_tu
+tests.test_ayuno_entreno tests.test_entreno_sesion tests.test_tendencias_todas` (136 tests) and
+`.venv/Scripts/python.exe -m unittest tests.test_agente_entreno tests.test_estados_vacios
+tests.test_estados_vacios_2 tests.test_estados_vacios_hosted tests.test_rendimiento` (91 tests),
+both in the foreground: **227 tests, all green**, inherited whole-gate floor **5962**.
+
+**Open followups.** None raised by this slice.
+
+**Merge.** `git switch main`; `git merge --no-ff feat/body-ayuno-entreno-1`; branch deleted. No
+deploy, no push.
