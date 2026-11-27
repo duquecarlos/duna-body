@@ -36450,3 +36450,100 @@ deploy, no push.
 
 **Merge sha:** `8b16ed00f06b22ccb098322ecbcd9ded6439a30b` (tree `0017745eb0decb461dd667a3ffafab048af0e09d`,
 identical to the branch's own tree -- empty diff, confirmed rather than re-gated).
+
+## BODY-ETIQUETA-FOTO-1
+
+Carlos's yes to proposal 25, relayed through `ORCH-CARLOS-DELEGATES-TIER-1-1`: a photo of a food
+label fills "New product" on the `/comida/productos` picker. A "Leer etiqueta" button on the
+picker's "Nuevo producto" card opens the camera/file picker
+(`<input type="file" accept="image/*" capture="environment">`); `body/static/etiqueta_foto.js`
+re-encodes the photo client-side to JPEG on a canvas (capped at 1568px per side, quality 0.85,
+EXIF/GPS stripped by the re-encode itself, refused client-side over 1,000,000 bytes) and previews
+it from a `data:` URL, never `blob:`. A new size-capped `POST /comida/productos/etiqueta` in
+`body/rutas/comida.py` streams the body in chunks the same way `body/rutas/dispositivos.py`'s own
+device routes do (no `UploadFile`, no multipart -- `python-multipart` is not installed), refuses
+anything over the same 1,000,000-byte ceiling or not `image/jpeg`, and -- only once a provider is
+configured -- sends ONE image content block to `body/agente/cliente.py`'s `Proveedor.responder()`
+with the existing `crear_producto` tool spec, nothing else. One block shape added per adapter
+(Anthropic `image`/base64, OpenAI `input_image`/data-URL, Gemini `inlineData`), each read off a
+fake transport in `tests/test_agente_cliente.py`'s new `BloqueImagenTest`; `Demo` short-circuits an
+image-bearing round straight to its own fixed, invented `crear_producto` call, never a network
+call. The route reads the model's `crear_producto` call and opens it as a REAL, still-pending
+`propuesta_agente` row through the existing `agente_herramientas._crear_producto` ->
+`agente_propuestas.crear` path -- nothing is written to a product table yet.
+
+**The confirm card is the existing manual form, pre-filled and editable.** `/comida/productos` now
+takes an optional `?propuesta_id=`; when present, `_etiqueta_pendiente_ctx` reads that still-pending
+row and `comida_productos.html`'s "Nuevo producto" form (nombre, marca, tamano_neto, tamano_unidad,
+every nutrient field) pre-fills from it and posts to a new
+`POST /comida/productos/etiqueta/{propuesta_id}/confirmar` instead of `/nuevo`. A field the model
+could not read stays empty -- nothing is invented. New `agente_propuestas.editar_antes_de_aplicar`
+overwrites the pending row's `despues_json` with the person's own edited fields, then the SAME
+`agente_propuestas.aplicar` the chat panel's Aplicar button calls does the write -- proven in
+`tests/test_etiqueta_foto.py` by editing the name before confirming and asserting the model's
+original demo name never reaches the product table while the edited one does. `.../descartar` and
+`.../deshacer` call the existing `descartar`/`deshacer` the same way. `_tarjeta_crear_producto`
+(the chat panel's own card builder for this same action) gained every nutrient line, in
+`db.INGESTA_METRIC_KEYS` order, using the same `comun._fig_unit` line shape `registrar_comida`'s
+card already uses -- it no longer hides nutrients.
+
+**Privacy.** The exact notice ruling 5 gave, shown every time a photo is about to be sent (ES:
+"La foto va al proveedor de IA para leer la etiqueta. Body guarda solo las cifras que confirmes,
+nunca la foto."); with no provider configured the button is replaced by an explanation linking
+`/ajustes`, and nothing is sent. `tests/test_consentimiento_v4.py` (the versioned-consent gate) was
+not touched and stayed byte-for-byte green. No image byte, and no figure this feature reads or
+writes, appears in a log, a URL, or this ledger entry.
+
+**Four bugs found while testing, all fixed on this same branch (Demo/fakes only, no network):**
+(1) the route's first call to `agente_conversacion.crear` passed `origen="comida_etiqueta"`, a
+value `conversacion_agente`'s own CHECK constraint does not allow (`NULL`, `'mcp'`, `'hogar'` only)
+-- dropped the `origen` kwarg instead of widening the schema. (2) the confirm card showed a
+nutrient as "120.0" instead of "120" because `_numero_cantidad_comida` always returns `float` --
+new `_sin_decimal_entero()` formats a whole float as an int for display. (3) `_tarjeta_crear_producto`
+referenced an undefined name `v` (`comun._fig_unit(t, k, v, defs)`) -- a `NameError` on every
+real nutrient-bearing card, caught by the new `tests/test_asistente_panel.py` cases; fixed to
+`nutrientes[k]`. (4) `comida.productos.etiqueta_apagada`'s impersonal "no se puede leer" tripped
+`tests/test_registro_tu.py`'s su/sus/tiene/puede guard as a false positive -- added to the
+allow-list next to the 8 existing impersonal/third-person entries, same reasoning as
+`asistente.propuesta.sin_deshacer`'s own "'se puede' is an impersonal construction, not usted".
+(5) `_volver_a_productos`'s redirect target used a ternary
+(`f"...{urlencode(pares)}" if pares else "/comida/productos"`) that `tests/test_seguridad.py`'s
+static redirect-target guard could not resolve as fixed-or-sanitized (it only recognizes a plain
+f-string, the exact shape this same file's other two redirects already use) -- dropped the
+ternary; `urlencode([])` already renders as `""`, so the plain f-string is exactly as safe.
+
+**CSRF.** No token mechanism exists anywhere in this app -- `body/seguridad.py`'s
+`SeguridadMiddleware` same-origin Origin/Referer check, applied globally to every UNSAFE_METHODS
+route, is the app's only and complete CSRF defense, and already covers the 4 new POST routes
+through `tests/test_seguridad.py`'s own dynamic sweep with zero changes to that file; one explicit
+confirmatory test was still added in `tests/test_etiqueta_foto.py` to match the spec's test list.
+
+**Deviations.** The `touches:` list named `tests/test_comida_producto.py`, which does not exist;
+the real picker test file is `tests/test_comida.py` (run, green, needed no change).
+
+**Customer bytes.** 8 new i18n keys (`comida.productos.etiqueta_boton`, `etiqueta_aviso`,
+`etiqueta_apagada`, `etiqueta_leyendo`, `etiqueta_error_grande`, `etiqueta_error_no_imagen`,
+`etiqueta_error_no_legible`, `etiqueta_aplicada`, es/en), and 4 new routes
+(`POST /comida/productos/etiqueta`, `.../etiqueta/{propuesta_id}/confirmar`, `.../descartar`,
+`.../deshacer`). Approved for merge on green under `ORCH-CARLOS-DELEGATES-TIER-1-1`'s own
+approval-reason for this slice ("Customer-facing strings and a new route; merge approved").
+
+**Gate.** Pre-flight confirmed `main` at `0fdbdd1f4b7c9e199dfc79907b15550bf0f73c7c` and this
+branch's HEAD at the same commit before this slice's own first commit. Full gate run in 10
+foreground chunks covering every one of the 254 `tests/test_*.py` modules
+(`.venv/Scripts/python.exe -m unittest tests.<module> tests.<module> ...` per chunk): 566, 650,
+540, 485, 742, 711, 707, 595, 614, 374 -- **5984 tests, all green**, summing exactly to a
+collect-only count of **5984** taken on the same tree before the chunks ran. (Chunk 9 first failed
+once on `tests.test_seguridad`'s redirect-target guard over bug (5) above; fixed, chunk re-run
+green before continuing to chunk 10.)
+
+**Open followups.** None raised by this slice; the two questions the dispatch asked to have
+checked (each provider's current image-size limits against its own live docs; whether the next
+versioned-consent text should name photos explicitly) were not investigated here and are left for
+whoever next touches `body/agente/cliente.py` or `tests/test_consentimiento_v4.py`.
+
+**Merge.** `git switch main`; `git merge --no-ff feat/body-etiqueta-foto-1`.
+
+**Merge sha:** `da8e84747ccd8bbca20f36cbc8eeb0fa741cd5fd` (tree
+`ecc88e39e7aeee71e7eff7a15d76e8b417b42944`, identical to the branch's own tree -- empty diff,
+confirmed rather than re-gated).
