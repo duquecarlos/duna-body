@@ -381,8 +381,7 @@ def _volver_a_productos(f: dict[str, list[str]], **extra: str) -> RedirectRespon
         pares.append(("q", q))
     for k, v in extra.items():
         pares.append((k, v))
-    return RedirectResponse(f"/comida/productos?{urlencode(pares)}" if pares else "/comida/productos",
-                             status_code=303)
+    return RedirectResponse(f"/comida/productos?{urlencode(pares)}", status_code=303)
 
 
 @router.post("/comida/productos/etiqueta/{propuesta_id}/confirmar")
