@@ -90,6 +90,7 @@ _THIRD_PERSON_ALLOW = {
     "agente.error.dolor_ejercicio_desconocido": "'tiene' subject is 'ese entreno' (the workout), not the reader",
     "agente.error.despertar_levantado_antes_de_sueno": "'puede' subject is 'la hora de levantarte' "
                                                         "(the time), not the reader",
+    "comida.productos.etiqueta_apagada": "'se puede' is an impersonal construction, not usted",
 }
 
 

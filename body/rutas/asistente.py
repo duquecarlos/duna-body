@@ -1025,11 +1025,23 @@ def _tarjeta_crear_producto(t: T, defs: dict, despues: dict, antes_json: dict | 
                              person_id: int) -> tuple:
     """BODY-COMIDA-PRODUCTO-1-B: create-only (no `antes`) -- just the product's own name and
     brand, exactly how the picker's own product list joins them (body/templates/
-    comida_productos.html's "{{ nombre }} · {{ marca }}"), never the nutrition figures: those
-    only show once the product is actually saved."""
+    comida_productos.html's "{{ nombre }} · {{ marca }}").
+
+    BODY-ETIQUETA-FOTO-1 ruling 6: every nutrient this proposal carries now shows too, in the
+    catalogue's own fixed order (db.INGESTA_METRIC_KEYS) -- a misread or an invented figure must
+    be visible before the person applies it, never hidden behind a bare name. The SAME line shape
+    `_comida_cantidad_txt` already builds for a meal's own amount (comun._fig_unit plus the
+    catalogue label), reused rather than a second nutrient-line format."""
     nombre = despues["nombre"]
     marca = despues.get("marca")
-    return None, f"{nombre} · {marca}" if marca else nombre, None
+    texto = f"{nombre} · {marca}" if marca else nombre
+    nutrientes = despues.get("nutrientes") or {}
+    if nutrientes:
+        lineas = [t("asistente.propuesta.comida_cantidad", metric=t("metric." + k),
+                     valor=comun._fig_unit(t, k, nutrientes[k], defs))
+                  for k in db.INGESTA_METRIC_KEYS if k in nutrientes]
+        texto += "\n" + "; ".join(lineas)
+    return None, texto, None
 
 
 # One card builder per action (BODY-PROPUESTAS-TABLA-1), keyed exactly like body/agente/

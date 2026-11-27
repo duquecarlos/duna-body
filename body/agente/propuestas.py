@@ -2106,6 +2106,21 @@ def deshacer(conn: sqlite3.Connection, person_id: int, propuesta_id: int) -> dic
     return {"estado": "deshecha"}
 
 
+def editar_antes_de_aplicar(conn: sqlite3.Connection, person_id: int, propuesta_id: int, despues: dict) -> None:
+    """BODY-ETIQUETA-FOTO-1 ruling 6: the picker's own confirm card for a label read is editable --
+    this overwrites a still-pending proposal's own despues_json with what the person confirmed,
+    right before the SAME `aplicar` above applies it, so what gets written is never silently the
+    model's own first guess. Refused (PropuestaAjena, the same "not reachable" shape `aplicar`/
+    `descartar`/`deshacer` already raise) once the proposal has left 'propuesta' -- a stale or
+    already-resolved id can never be rewritten."""
+    row = _fila_o_ajena(conn, person_id, propuesta_id)
+    if row["estado"] != "propuesta":
+        raise PropuestaAjena()
+    with conn:
+        conn.execute("UPDATE propuesta_agente SET despues_json = ? WHERE id = ?",
+                     (json.dumps(despues, ensure_ascii=False), propuesta_id))
+
+
 def estado_conversacion(conn: sqlite3.Connection, person_id: int, conversacion_id: int) -> list[dict]:
     """(id, accion, estado) for every proposal of this conversation -- what the system prompt's
     status block (agent-capabilities-v1 section 3) tells the model, authoritative over its own

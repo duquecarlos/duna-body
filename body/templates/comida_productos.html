@@ -60,29 +60,61 @@
 <div class="card"><p class="read">{{ t('comida.productos.sin_productos') }}</p></div>
 {% endif %}
 
-<div class="card">
+<div class="card" id="etiqueta">
   <div class="q">{{ t('comida.productos.nuevo') }}</div>
-  <form method="post" action="/comida/productos/nuevo" class="mt-12">
+  {% if asistente_disponible %}
+  <p class="note">{{ t('comida.productos.etiqueta_aviso') }}</p>
+  <input type="file" accept="image/*" capture="environment" id="etiqueta-input" class="hidden"
+         data-url="/comida/productos/etiqueta"
+         data-msg-grande="{{ t('comida.productos.etiqueta_error_grande') }}"
+         data-msg-no-imagen="{{ t('comida.productos.etiqueta_error_no_imagen') }}"
+         data-msg-no-legible="{{ t('comida.productos.etiqueta_error_no_legible') }}"
+         data-msg-leyendo="{{ t('comida.productos.etiqueta_leyendo') }}">
+  <button class="btn mb-12" type="button" id="etiqueta-boton">{{ t('comida.productos.etiqueta_boton') }}</button>
+  <p class="note hidden" id="etiqueta-estado" role="status" aria-live="polite"></p>
+  <img class="etiqueta-preview hidden" id="etiqueta-preview" alt="">
+  {% else %}
+  <p class="note">{{ t('comida.productos.etiqueta_apagada') }} <a class="taplink" href="/ajustes">{{ t('nav.settings') }}</a></p>
+  {% endif %}
+  <form method="post"
+        action="{{ ('/comida/productos/etiqueta/' ~ etiqueta_pendiente.id ~ '/confirmar') if etiqueta_pendiente else '/comida/productos/nuevo' }}"
+        class="mt-12">
     {% for l in draft %}<input type="hidden" name="linea" value="{{ l.codificada }}">{% endfor %}
     <input type="hidden" name="q" value="{{ q }}">
     <div class="q">{{ t('comida.productos.nombre_label') }}</div>
-    <input type="text" name="nombre" class="field mb-12" required aria-label="{{ t('comida.productos.nombre_label') }}">
+    <input type="text" name="nombre" class="field mb-12" required aria-label="{{ t('comida.productos.nombre_label') }}" value="{{ etiqueta_pendiente.nombre if etiqueta_pendiente else '' }}">
     <div class="q">{{ t('comida.productos.marca_label') }}</div>
-    <input type="text" name="marca" class="field mb-12" aria-label="{{ t('comida.productos.marca_label') }}">
+    <input type="text" name="marca" class="field mb-12" aria-label="{{ t('comida.productos.marca_label') }}" value="{{ etiqueta_pendiente.marca if etiqueta_pendiente else '' }}">
     <div class="q">{{ t('comida.productos.tamano_label') }}</div>
-    <input type="number" inputmode="decimal" step="any" min="0" name="tamano_neto" class="field mb-12" aria-label="{{ t('comida.productos.tamano_label') }}">
+    <input type="number" inputmode="decimal" step="any" min="0" name="tamano_neto" class="field mb-12" aria-label="{{ t('comida.productos.tamano_label') }}" value="{{ etiqueta_pendiente.tamano_neto if etiqueta_pendiente and etiqueta_pendiente.tamano_neto is not none else '' }}">
     <select name="tamano_unidad" class="field mb-12" aria-label="{{ t('comida.productos.unidad_label') }}">
       <option value="">—</option>
     {% for opt in unidad_opciones %}
-      <option value="{{ opt.value }}">{{ opt.label }}</option>
+      <option value="{{ opt.value }}" {% if etiqueta_pendiente and etiqueta_pendiente.tamano_unidad == opt.value %}selected{% endif %}>{{ opt.label }}</option>
     {% endfor %}
     </select>
     <p class="note">{{ t('comida.productos.fuente_etiqueta') }}</p>
   {% for campo in nutriente_campos %}
     <div class="q">{{ campo.label }}</div>
-    <input type="number" inputmode="decimal" step="any" min="0" name="valor_{{ campo.key }}" class="field mb-12" aria-label="{{ campo.label }}">
+    <input type="number" inputmode="decimal" step="any" min="0" name="valor_{{ campo.key }}" class="field mb-12" aria-label="{{ campo.label }}" value="{{ etiqueta_pendiente.nutrientes.get(campo.key, '') if etiqueta_pendiente else '' }}">
   {% endfor %}
     <button class="btn" type="submit">{{ t('comida.productos.crear_btn') }}</button>
   </form>
+  {% if etiqueta_pendiente %}
+  <form method="post" action="/comida/productos/etiqueta/{{ etiqueta_pendiente.id }}/descartar" class="mt-6">
+    {% for l in draft %}<input type="hidden" name="linea" value="{{ l.codificada }}">{% endfor %}
+    <input type="hidden" name="q" value="{{ q }}">
+    <button class="taplink" type="submit">{{ t('asistente.propuesta.descartar') }}</button>
+  </form>
+  {% endif %}
 </div>
+{% if etiqueta_aplicada_id %}
+<div class="card">
+  <p class="read">{{ t('comida.productos.etiqueta_aplicada') }}</p>
+  <form method="post" action="/comida/productos/etiqueta/{{ etiqueta_aplicada_id }}/deshacer" class="mt-6">
+    <button class="btn" type="submit">{{ t('asistente.propuesta.deshacer') }}</button>
+  </form>
+</div>
+{% endif %}
+<script src="{{ static_url('etiqueta_foto.js') }}" defer></script>
 {% endblock %}

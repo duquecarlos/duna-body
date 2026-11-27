@@ -72,6 +72,58 @@ class AnthropicAdapterTest(unittest.TestCase):
         self.assertIn("2026-11-01", tool_result["content"])
 
 
+class BloqueImagenTest(unittest.TestCase):
+    """BODY-ETIQUETA-FOTO-1 ruling 4: one "imagen" content block per provider adapter, each in the
+    shape that adapter's own SDK already uses for an image -- against a fake transport, never the
+    network."""
+
+    _B64 = "Zm90by1kZS1wcnVlYmE="  # arbitrary base64, never a real photo
+
+    def test_anthropic_image_block_shape(self):
+        seen = {}
+
+        def transporte(payload):
+            seen["payload"] = payload
+            return {"content": [{"type": "tool_use", "id": "c1", "name": "crear_producto", "input": {}}],
+                    "stop_reason": "tool_use", "usage": {}}
+
+        prov = cliente.Anthropic("claude-sonnet-5-5", "sk-fake", transporte=transporte)
+        prov.responder("sis", [{"rol": "usuario", "bloques": [
+            {"tipo": "imagen", "media_type": "image/jpeg", "datos_b64": self._B64}]}],
+            [{"nombre": "crear_producto", "descripcion": "x", "parametros": {}}])
+        bloque = seen["payload"]["messages"][0]["content"][0]
+        self.assertEqual(bloque, {"type": "image",
+                                   "source": {"type": "base64", "media_type": "image/jpeg", "data": self._B64}})
+
+    def test_openai_image_block_shape(self):
+        seen = {}
+
+        def transporte(payload):
+            seen["payload"] = payload
+            return {"output": [], "usage": {}}
+
+        prov = cliente.OpenAI("gpt-x", "sk-fake", transporte=transporte)
+        prov.responder("sis", [{"rol": "usuario", "bloques": [
+            {"tipo": "imagen", "media_type": "image/jpeg", "datos_b64": self._B64}]}], [])
+        item = seen["payload"]["input"][0]
+        self.assertEqual(item, {"role": "user", "content": [
+            {"type": "input_image", "image_url": f"data:image/jpeg;base64,{self._B64}"}]})
+
+    def test_gemini_image_block_shape(self):
+        seen = {}
+
+        def transporte(payload):
+            seen["payload"] = payload
+            return {"candidates": [{"content": {"parts": [{"text": "ok"}]}, "finishReason": "STOP"}],
+                    "usageMetadata": {}}
+
+        prov = cliente.Gemini("gemini-x", "key-fake", transporte=transporte)
+        prov.responder("sis", [{"rol": "usuario", "bloques": [
+            {"tipo": "imagen", "media_type": "image/jpeg", "datos_b64": self._B64}]}], [])
+        parte = seen["payload"]["contents"][0]["parts"][0]
+        self.assertEqual(parte, {"inlineData": {"mimeType": "image/jpeg", "data": self._B64}})
+
+
 class ProveedorInitSharedTest(unittest.TestCase):
     """BODY-TIER1-LIMPIEZA-1: Anthropic/OpenAI/Gemini construct positionally through the shared
     Proveedor.__init__ -- no provider subclass defines its own anymore (they were byte-identical).
@@ -259,6 +311,19 @@ class DemoProviderTest(unittest.TestCase):
             r2 = prov.responder("sis", mensajes, [])
             self.assertEqual(r2.motivo_fin, "end_turn")
             self.assertEqual(r2.uso, cliente.Uso())
+
+    def test_demo_answers_an_image_round_with_its_own_fixed_crear_producto_call(self):
+        """BODY-ETIQUETA-FOTO-1: a message carrying an "imagen" block short-circuits straight to
+        the fixed, invented label -- never the leer_ajustes default, and never a second round."""
+        os.environ["BODY_AGENTE_PROVEEDOR"] = "demo"
+        with patch("httpx.post", side_effect=AssertionError("Demo must never call the network")):
+            prov = cliente.proveedor_configurado()
+            mensajes = [{"rol": "usuario", "bloques": [
+                {"tipo": "imagen", "media_type": "image/jpeg", "datos_b64": "Zm90bw=="}]}]
+            r = prov.responder("sis", mensajes, [])
+            self.assertEqual(r.motivo_fin, "tool_use")
+            self.assertEqual(r.bloques[0].nombre, "crear_producto")
+            self.assertEqual(r.bloques[0].parametros["nombre"], cliente._DEMO_ETIQUETA["nombre"])
 
 
 class NoLoggedBodyTest(unittest.TestCase):
