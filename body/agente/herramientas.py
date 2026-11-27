@@ -72,8 +72,9 @@ import threading
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .. import anatomia, baselines, captura_sueno, catalogo_tendencias, comidas, compartir, contexto_dia, cuenta, \
-    db, despertar_real, desplazamiento_import, enlaces, entreno_historial, errores, esfuerzo_sesion, \
+from .. import anatomia, ayuno_entreno, baselines, captura_sueno, catalogo_tendencias, comidas, compartir, \
+    contexto_dia, cuenta, db, despertar_real, desplazamiento_import, enlaces, entreno_historial, errores, \
+    esfuerzo_sesion, \
     experimentos, fechas, garmin_adapter, garmin_cuenta, goals, history, horizonte, household, noche_rasgos, \
     nutriente_objetivo, practicas, profile, pull, readiness, reentrada, registro_cobertura, shift_import, \
     sueno_fc, turnos_costo, tutoriales, viajes
@@ -2190,6 +2191,17 @@ def _entreno_esfuerzo(conn: sqlite3.Connection, person_id: int, a: dict) -> dict
     }
 
 
+def _entreno_ayuno(conn: sqlite3.Connection, person_id: int, a: dict) -> dict:
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: how long it had been since this person's own last
+    meal when this session started -- honestly None when unknown (no timed meal within ayuno_
+    entreno.MODELO['ventana_busqueda_horas']), never a guess."""
+    horas = ayuno_entreno.horas_desde_comida(conn, person_id, a["start_local"]) if a["start_local"] else None
+    etiqueta = None
+    if horas is not None:
+        etiqueta = "en_ayunas" if horas >= ayuno_entreno.MODELO["umbral_horas"] else "alimentado"
+    return {"modelo": ayuno_entreno.MODELO["version"], "horas": horas, "etiqueta": etiqueta}
+
+
 def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = None, desde: str | None = None,
                    hasta: str | None = None) -> dict:
     """A day's or a range's training sessions (with their sets, display values plus whether each
@@ -2199,7 +2211,9 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
 
     ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: every session of the person in range, any sport, not
     only strength/manual -- the WHERE clause below carries no `type` filter any more. Ruling 2 adds
-    `esfuerzo` (see `_entreno_esfuerzo`), read for every session, strength included."""
+    `esfuerzo` (see `_entreno_esfuerzo`), read for every session, strength included. BODY-AYUNO-
+    ENTRENO-1 ruling 4 adds `ayuno` (see `_entreno_ayuno`): how long since this person's own last
+    meal when the session started, honestly None when unknown."""
     if day is not None:
         ini, fin = day, day
     elif desde is not None and hasta is not None:
@@ -2262,6 +2276,7 @@ def _leer_entreno(conn: sqlite3.Connection, person_id: int, day: str | None = No
             "duracion_min": a["duration_s"] / 60 if a["duration_s"] is not None else None,
             "series": series, "ultima_vez": ultima_vez, "dolor": dolor, "checkin": checkin,
             "esfuerzo": _entreno_esfuerzo(conn, person_id, a),
+            "ayuno": _entreno_ayuno(conn, person_id, a),
         })
     planes = conn.execute(
         "SELECT * FROM plan WHERE person_id = ? AND day BETWEEN ? AND ? AND ejercicios_json IS NOT NULL "

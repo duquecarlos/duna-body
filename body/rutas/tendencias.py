@@ -9,7 +9,8 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, entreno_racha, fuentes, goals, graficos_eje, identity, profile, turnos_costo, viajes
+from .. import anatomia, ayuno_entreno, baselines, db, entreno_racha, fuentes, goals, graficos_eje, history, \
+    identity, profile, turnos_costo, viajes
 from ..catalogo_tendencias import TODAS
 from ..desplazamiento_import import FUENTE as _FUENTE_COMMUTE
 from ..i18n import T
@@ -479,6 +480,55 @@ def _trend_card(t: T, defs: dict, k: str, start, end, month, nights, marcas, via
     return card, p
 
 
+# BODY-AYUNO-ENTRENO-1 ruling 3: the aggregate card, "Your fasted sessions vs. fed" -- ayuno_
+# entreno.py (this slice's own model) carries the figures, this module words them, the same split
+# body/rutas/entreno_sesion.py's own ayuno helpers keep (ruling 2) -- neither route module may
+# import the other for one helper, so these are their own small copies.
+def _ayuno_valor_txt(t: T, key: str, valor: float | None) -> str | None:
+    if valor is None:
+        return None
+    if key == "calories":
+        return f"{t.num(round(valor))} kcal"
+    return f"{t.num(round(valor))} {t('unit.bpm')}"  # avg_hr, max_hr
+
+
+def _ayuno_tipo_txt(t: T, tipo: str | None, nombre: str | None) -> str:
+    if nombre:
+        return nombre[:1].upper() + nombre[1:]
+    if tipo in history.KNOWN_ACTIVITY_TYPES:
+        return t("activity.type." + tipo)
+    return t("activity.generic")
+
+
+_AYUNO_FIGURA_LABEL_KEY = {"avg_hr": "entreno_sesion.avg_hr", "max_hr": "entreno_sesion.max_hr",
+                           "calories": "entreno_sesion.calorias"}
+
+
+def _ayuno_tipo_ctx(t: T, grupo: dict) -> dict:
+    figuras = []
+    for key in ("avg_hr", "max_hr", "calories"):
+        v_en = _ayuno_valor_txt(t, key, grupo["en_ayunas"].get(key))
+        v_com = _ayuno_valor_txt(t, key, grupo["alimentado"].get(key))
+        if v_en is None and v_com is None:
+            continue
+        figuras.append({"label": t(_AYUNO_FIGURA_LABEL_KEY[key]),
+                        "en_ayunas": t("trends.ayuno.fila_en_ayunas", valor=v_en or "—"),
+                        "alimentado": t("trends.ayuno.fila_alimentado", valor=v_com or "—")})
+    return {"tipo_txt": _ayuno_tipo_txt(t, grupo["tipo"], grupo["nombre"]), "figuras": figuras}
+
+
+def _ayuno_ctx(t: T, conn, person_id: int, desde: date | None, hasta: date | None) -> dict | None:
+    comp = ayuno_entreno.comparar_tendencias(conn, person_id, desde.isoformat() if desde else None,
+                                             hasta.isoformat() if hasta else None)
+    if comp is None:
+        return None
+    tipos = [_ayuno_tipo_ctx(t, g) for g in comp["tipos"]]
+    ventana = (t("trends.ayuno.ventana", horas=t.minutes(round(comp["ventana_horas"] * 60)))
+              if comp["ventana_horas"] is not None else None)
+    faltan = t("trends.ayuno.faltan") if not tipos else None
+    return {"titulo": t("trends.ayuno.titulo"), "ventana": ventana, "tipos": tipos, "faltan": faltan}
+
+
 @router.get("/trends")
 @comun._cierra_conexion
 def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde: str | None = None,
@@ -620,6 +670,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
     cuerpo_ctx = {"vistas": anatomia.contexto(t, "tendencias", frozenset({"corazon"})),
                   "caption": t("cuerpo.caption.tendencias"), "recorte": "torso"}
     racha = _racha_ctx(t, conn, person_id, turnos_on, today_local)
+    ayuno = _ayuno_ctx(t, conn, person_id, start, end)
     # BODY-TENDENCIAS-KPI-MINI-1: the strip -- four KPI tiles (each only when its card exists on
     # this page, whichever range or month is showing) plus a fifth strength tile (only with a
     # strength study AND a floor). Pure Python over data this route already computed -- zero new
@@ -636,7 +687,7 @@ def trends(r: str = "all", m: str | None = None, todas: str | None = None, desde
                    since=comun._short_date(t, date.fromisoformat(since)) if since else "", days=t.num(days),
                    r=r, ranges=RANGES, fig_label=fig_label, nights=bool(nights), marcas=bool(marcas),
                    viajes=bool(viaje_dias),
-                   month_title=t.month_year(month) if month else None, racha=racha, kpi_tiles=kpi_tiles,
+                   month_title=t.month_year(month) if month else None, racha=racha, ayuno=ayuno, kpi_tiles=kpi_tiles,
                    extra_groups=extra_groups, extra_count=extra_count, todas=todas == "1",
                    desde=desde, dia=desde_dia, back_href=back_href, back_label=back_label, turnos=turnos_on,
                    cuerpo=cuerpo_ctx)

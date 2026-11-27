@@ -193,6 +193,10 @@ _CEILINGS = {
     # re-measured with the dolor card's own two new reads (zonas_en_recuperacion, dolor_de_sesion)
     # ON THE REAL PATH that shows the card (an open 'lesion' period over a watch strength set's own
     # categoria): 13, still comfortably under 16 -- ceiling unchanged.
+    # BODY-AYUNO-ENTRENO-1 ruling 2/6: this file's own fixture's manual session (no `type`, no
+    # `start_local`) never reaches ayuno_entreno's two reads (horas_desde_comida's own early
+    # "no start_local" return, comparar's own early "no type" return) -- measured 16 statements
+    # with and without this slice's own code, ceiling unchanged.
     "/day/{day}/entreno/{source_id}": 16,
     "/experiments/{experiment_id}": 27,
     "/garmin": 9,
@@ -216,6 +220,10 @@ _CEILINGS = {
     "/shifts/como": 20,
     "/shifts/patron": 16,
     "/sw.js": 3,
+    # BODY-AYUNO-ENTRENO-1 ruling 3/6: the fasted-vs-fed aggregate card adds exactly 2 statements
+    # on this file's own fixture (comparar_tendencias' own one activity read plus one bounded
+    # ingesta read, ruling 6's fixed cost regardless of how many sessions or types the window
+    # holds) -- measured 23 (21 before this slice), still comfortably under 28, ceiling unchanged.
     "/trends": 28,
 }
 
