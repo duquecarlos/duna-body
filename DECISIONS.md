@@ -36547,3 +36547,90 @@ whoever next touches `body/agente/cliente.py` or `tests/test_consentimiento_v4.p
 **Merge sha:** `da8e84747ccd8bbca20f36cbc8eeb0fa741cd5fd` (tree
 `ecc88e39e7aeee71e7eff7a15d76e8b417b42944`, identical to the branch's own tree -- empty diff,
 confirmed rather than re-gated).
+
+## BODY-ENTRENO-VINCULO-2 -- the other direction: a manual session logged after the watch already links too
+
+BODY-ENTRENO-VINCULO-2-INV (OBSERVED on `main` `0fdbdd1`) measured that BODY-ENTRENO-VINCULO-1's
+auto-link only ran from `db.save_day`, when a WATCH `strength_training` row synced -- a manual
+session logged by hand AFTER that row already synced was never offered the link at all. Approved
+by ORCH-CARLOS-DELEGATES-TIER-1-1: "Behaviour of an existing, undoable link ...; no schema change;
+the time-window rule is a versioned, reversible quality choice made by the orchestrator."
+
+**Ruling 1 -- the mirror, same uniqueness rule.** `db._enlazar_reloj_unico(conn, person_id, day,
+manual_source_id, manual_start_local)`, called from `db.create_manual_session` inside its own
+existing `with conn:` right after the INSERT -- the one production choke point for this direction.
+Links the new manual session to that day's watch `strength_training` row only when there is
+EXACTLY ONE such row with `vinculo_manual IS NULL` and `vinculo_separado = 0`, AND the new manual
+session is the day's only unlinked manual session (so neither direction can ever disagree about
+which pair is "the" pair). The write is the same `UPDATE activity SET vinculo_manual = ...` on the
+watch row that `_enlazar_sesion_manual_unica` already makes -- no second link column.
+`_enlazar_sesion_manual_unica` itself is otherwise unchanged (same signature plus one new
+parameter, ruling 2).
+
+**Ruling 2 -- the time window, `VINCULO_MODELO`.** A new module constant in `body/db.py`:
+`VINCULO_MODELO = {"version": "vinculo-v2", "max_diferencia_min": 180}`. A shared helper,
+`_dentro_de_ventana_vinculo(a, b)`, returns `True` (the day-only rule governs, as before this
+slice) when either `start_local` is `None`, else compares the two parsed with the module's own
+`datetime.fromisoformat` (no new parser) and requires at most 180 minutes apart. Both directions
+call it on their one candidate before linking, so a watch session synced at 18:00 and a manual
+note at 15:00 (180 min) still link; at 14:59 (181 min) they do not, in either direction.
+
+**Ruling 3 -- the conformity fixture.** `tests/test_agente_conformidad.py`'s `unir_sesiones` seed
+(a watch session `a3` and a manual session `m3` on the same day, 60 minutes apart, both within the
+new window) would now auto-link on `create_manual_session` and stop being the unlinked pair that
+clause needs `unir_sesiones` to join. Fixed by marking the watch row `vinculo_separado = 1` via
+`db.set_vinculo_manual` BEFORE the manual insert, with a comment stating why -- the fixture's
+subject (an unlinked pair for `unir_sesiones` to join, asserted at the old :223, now a few lines
+further down) is restored unchanged; nothing at that assertion was weakened.
+
+**Ruling 4 -- tests**, all in `tests/test_entreno_vinculo.py` (invented data, `tests/_isolate.py`
+first, 37 tests in the module after this slice, up from 25 before). New class
+`ManualAfterWatchLinkingTest` covers the mirror direction: links with exactly one watch and one
+manual candidate; does not link with two watch candidates, two manual candidates (a third manual
+session created while two others are still unlinked), an already-linked watch row, a split watch
+row, or a different person's row; links at 180 minutes apart and not at 181; links by day when the
+manual session carries no `start_local`. Two new tests added to the existing `SaveDayLinkingTest`
+cover the SAME 180/181-minute window for the watch-first direction. Every pre-existing test in
+this module stays green **unchanged** -- none of their manual fixtures ever set a `start_local`
+(always `None`), so the window's day-only fallback governs them exactly as ruling 2 of
+BODY-ENTRENO-VINCULO-1 already did; the window changes no existing test's outcome.
+
+**Ruling 5 -- cost.** `create_manual_session` gained one unconditional call to
+`_enlazar_reloj_unico` inside its existing transaction (a constant number of statements, never one
+per session) -- the function itself runs one or two SELECTs and, on a link, one UPDATE, regardless
+of how many sessions exist elsewhere. `tests/test_rendimiento.py`'s own fixture DID link a pair it
+did not before: its seeded manual "Fuerza" session and demo._seed()'s own random (previously
+unlinked) watch `strength_training` row on the same day are both within the new window (the
+manual session carries no `start_local`, so the day-only rule applies), so
+`/day/{day}/entreno/{source_id}`'s fixture-picked identity is now the merged (watch) one instead
+of the manual one that merged away (`entreno_sesion.actividad`'s pre-existing merged-identity
+contract, BODY-ENTRENO-VINCULO-1 ruling 3) -- `_seed()` updated to follow that identity. The
+route's own measured cost moved from 12 to 23 statements (the merged row now carries a `type` and
+`start_local`, so it reaches two `ayuno_entreno` reads the old fixture's bare manual row never
+did); ceiling raised by the file's own rule, `ceil(23 * 1.3) = 30`, both the table entry and its
+comment updated with the reasoning. No other route's measured statement count moved.
+
+**Deviations.** None -- `tests/test_entreno_vinculo.py` existed exactly as the spec anticipated
+(no grep fallback needed).
+
+**Customer bytes.** None. No string, route or schema changed; this is pure linking-decision logic
+behind an existing, undoable link.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, run in 26 foreground chunks
+(the 11 touched/adjacent modules run individually first -- 393 tests -- then the remaining 243
+modules in groups of 10, or 5 for `test_garmin_*`/`test_host_*`): 70, 176, 181, 198, 239, 208
+(1 skipped), 276, 193, 197, 183, 175, 148, 264, 222, 246, 275, 233, 227, 350, 298, 211, 129, 234,
+295, 211, 163. **5995 tests, all green** (1 pre-existing skip, 1 pre-existing `expectedFailure` in
+`test_agente_conformidad`, neither touched by this slice), summing exactly to a collect-only count
+of **5995** taken on the same tree via `unittest.TestLoader().discover(...)` before the chunks ran.
+
+No password, token, session secret or health figure was read, printed, or written anywhere in this
+slice's own work.
+
+**Open followups.** None raised by this slice.
+
+**Merge.** `git switch main`; `git merge --no-ff feat/body-entreno-vinculo-2`.
+
+**Merge sha:** `a5fc33175dc5fe49409e6a40008b0cc4dee102fd` (tree
+`9e089da0bb4ca4b21c0d64c1f62498f8349768ef`, identical to the branch's own tree -- empty diff,
+confirmed rather than re-gated).
