@@ -176,8 +176,13 @@ client = TestClient(web.app, follow_redirects=False)
 # check plus one batched active-experiments read, never a per-experiment query on this file's own
 # fixture (its seeded experiment never qualifies as an unmarked-yesterday candidate). Measured 157
 # statements (131 before), ceil(157 * 1.3) = 205.
+# BODY-HOY-LO-QUE-VENCE-1: /'s own ceiling, raised for the "Por vencer" strip (body/vence.py) --
+# the mcp/cobertura sources are reused (0 new statements), the metric-goal-deadline source's one
+# bounded query plus its own household.household_of lookup, and this file's own fixture carries no
+# plan horizon beyond PLANES_HOY_MAX (so _lineas_horizontes_extra's two queries never run here).
+# Measured 160 statements (157 before), ceil(160 * 1.3) = 208.
 _CEILINGS = {
-    "/": 205,
+    "/": 208,
     "/comida/productos": 29,
     "/comida/productos/agregar": 17,
     "/ajustes/asistente": 16,
@@ -946,6 +951,51 @@ class PlanHoyCostIndependentOfSpanTest(unittest.TestCase):
             una["statements"], ocho["statements"],
             f"8 weekly target lines cost more statements than 1 on \"/\": "
             f"{una['statements']} vs {ocho['statements']}")
+
+
+class VenceCostIndependentOfCountTest(unittest.TestCase):
+    """BODY-HOY-LO-QUE-VENCE-1 ruling 5: the "coming due" strip's own added cost on "/" stays the
+    same whether there is one horizon beyond the plan card's own PLANES_HOY_MAX cap (with one
+    metric-goal deadline in range) or ten of each -- body/vence.py's own _lineas_horizontes_extra
+    reads its two sources (goal, horizonte_checkpoint) with one bounded IN(...) query each,
+    always sliced to VENCE_MODELO's own horizontes_max first, and _lineas_metas reads every
+    matching metric-goal deadline with one ranged query, never one per horizon or per goal."""
+
+    HOY = date(2026, 11, 20)
+
+    def _fixture(self, conn, person_id: int, n_horizontes_extra: int, n_metas: int) -> None:
+        db.set_metric(conn, self.HOY.isoformat(), "resting_hr", 60.0, "garmin", person_id)
+        total_horizontes = 2 + n_horizontes_extra  # PLANES_HOY_MAX is 2 (body/rutas/hoy.py)
+        for i in range(total_horizontes):
+            gid = goals.propose(conn, person_id, f"ZZ horizonte {i}", "2026-01-01", kind="milestone",
+                                 deadline=(self.HOY + timedelta(days=30)).isoformat())
+            goals.activate(conn, gid)
+            db.crear_regla_horizonte(conn, person_id, gid, "siempre", None, "ZZ regla")
+        for i in range(n_metas):
+            gid = goals.propose(conn, person_id, f"ZZ meta {i}", "2026-01-01", kind="metric",
+                                 metric_key="resting_hr", direction="lower", target_value=50.0,
+                                 baseline_value=60.0, deadline=(self.HOY + timedelta(days=3)).isoformat())
+            goals.activate(conn, gid)
+        conn.commit()
+
+    def test_one_vs_ten_same_statement_count(self):
+        conn = _reset_db(self)
+        self._fixture(conn, 1, 1, 1)
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as pocos:
+                r1 = client.get("/")
+
+        conn2 = _reset_db(self)
+        self._fixture(conn2, 1, 10, 10)
+        with patch.object(web_comun, "_today_local", return_value=self.HOY):
+            with contar_sql() as muchos:
+                r2 = client.get("/")
+
+        self.assertEqual((r1.status_code, r2.status_code), (200, 200))
+        self.assertEqual(
+            pocos["statements"], muchos["statements"],
+            f"more horizons beyond the plan cap or more metric-goal deadlines cost more statements "
+            f"on \"/\": {pocos['statements']} vs {muchos['statements']}")
 
 
 class PracticasDiasEstadoCostTest(unittest.TestCase):
