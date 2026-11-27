@@ -36739,3 +36739,81 @@ widened or follow-on MCP-proposal view was out of scope for both slices and is l
 picks it up next.
 
 **Merge.** `git switch main`; `git merge --no-ff feat/body-hoy-lo-que-vence-1`.
+
+## BODY-HOGAR-PESAJE-HOY-1
+
+Hogar's draft contract body-pesaje-v1 (C:/Duna/hogar/dev-protocol/contracts/body-pesaje-v1.md, 27
+Nov, owner Body): Carlos may buy a Garmin Index S2 scale; when it has arrived, Hogar wants to show
+on his own Today only whether a weigh-in is recorded for the day, never the value. Hogar asked
+whether Body would rather give it a dedicated boolean so it never derives anything from the
+figure. Body's answer is yes: Body owns what "weighed today" means (the person's own day, any
+source, the same table every other Body reader uses), so the definition lives in Body once and
+Hogar reads a yes/no.
+
+**The key.** `GET /api/hogar/manana` gains one key, `pesaje_hoy`: `true` when the person has a
+stored `body_weight_kg` row for exactly `dia` in `daily_metric_efectiva` (the same view `_figuras`
+already reads), from ANY source (`self` today, a scale sync later lands on the same key), else
+`false`. Never `null`, never the figure itself.
+
+**Generic, not hardcoded to weight.** `body/hogar_feed.py` gets a module constant
+`PESAJE_METRICA = "body_weight_kg"` and a small helper `_registrado_en_dia(conn, person_id,
+metric_key, dia) -> bool`, built on one `SELECT EXISTS(...)` statement (the same shape
+`body/registro_cobertura.py` already uses for its own weight/waist coverage check). `pesaje_hoy`
+calls the helper with the constant; no per-person value is read anywhere. `manana()`'s docstring
+now names this slice's own addition.
+
+**Why a boolean, not a derived read.** Hogar never re-derives "weighed today" from the figure
+itself -- the exact ruling BODY-HOGAR-METAS-INGESTA-1 already made for nutrient targets (Body
+computes, Hogar reads the answer). A second definition of "weighed" living in Hogar would drift
+from whatever Body's own screens show the moment either side's rule changes.
+
+**Nothing else changes.** `figuras` is untouched -- Carlos's 15 Nov ruling on it (quoted in the
+module's own docstring) is his to narrow, not this slice's. No new route, no new scope, no i18n
+key (the response carries no customer-facing string, only a JSON boolean a device key already
+reads).
+
+**Tests added**, `tests/test_hogar_feed.py`, `PesajeHoyTest`: true when a weight is stored on
+`dia`; false when the latest weight is an earlier day (while `figuras` still carries that older
+row, unchanged); false with no weight at all; true for a non-`self` source row on `dia` (a future
+scale sync would land the same way); two people never mix; the route's own JSON has `pesaje_hoy`
+as a JSON boolean (`assertIs(..., True)`, not merely truthy). `test_four_old_keys_unchanged_with_
+turnos_present`'s own full-key-set assertion is extended to include `pesaje_hoy`. No health figure
+in any assertion -- every test seeds its own invented weight.
+
+**Statement counts.** `_registrado_en_dia` adds exactly one `SELECT EXISTS(...)` to `manana()`,
+regardless of whether the row exists. Measured on this file's own `test_rendimiento.py` fixture
+(`demo._seed(dias=30)` plus its usual assistant conversation and manual session), through
+`GET /api/hogar/manana` on its real (200) path: 28 statements before this slice (the figure
+`_CEILINGS_REAL_PATH` already carried from BODY-HOGAR-PLAN-RANGO-1), **29 after**. The route's own
+real-path ceiling, `tests/test_rendimiento.py`'s `_CEILINGS_REAL_PATH["/api/hogar/manana"]`, stays
+**37** (`ceil(28 * 1.3) = 37`, already measured with headroom before this slice) -- 29 sits
+comfortably under it, so the ceiling needed no change and `tests/test_rendimiento.py` was not
+touched. The no-auth-header sweep ceiling (`_CEILINGS["/api/hogar/manana"]` = 3, a 401 before any
+query) is likewise unaffected.
+
+**Customer bytes.** None. The response gains one JSON boolean key; no user-facing string, no i18n
+key, no template change.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, the whole suite, run in 29
+foreground chunks (10-module groups for most of the suite, 5-module groups for `test_garmin_*`,
+4-module groups for `test_host_*`, one single-module makeup run for `test_etiqueta_foto`, missed
+by an indexing slip in the first pass and caught by reconciliation): 227, 195, 204, 320, 224, 153,
+241, 233, 146, 67, 153, 194, 279, 214, 184, 264, 270, 267, 228, 340, 281, 218, 148, 165, 305, 284,
+106, 92, 15. **6017 tests, every chunk green** (no failures, no errors; the stray log lines seen
+in several chunks -- "pull attempt failed: NotSignedIn/RuntimeError/...", "dia vacio ...: ...=
+ausente", "backfill: N ok, ...", a deliberately injected "RuntimeError: boom" traceback in
+`test_sync_vivo.py`'s own fixture, and a handful of pre-existing `ResourceWarning: unclosed
+database` lines in `test_mudanza.py`/`test_turnos_opcional_5.py` -- are each test fixture output or
+pre-existing warnings, none touched by this slice, none a figure of a real person), summing
+exactly to a collect-only count of **6017** taken on the same final tree via
+`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`.
+
+No password, token, session secret or health figure of a real person was read, printed, or
+written anywhere in this slice's own work.
+
+**Pre-flight cleanup.** This slice started on `feat/body-cuerpo-spin-hoy-1`, an empty branch left
+by a stopped launch of another slice. `git status --porcelain` was empty and `git rev-list --count
+main..HEAD` printed `0`, so it was switched off and deleted (`git switch main`;
+`git branch -d feat/body-cuerpo-spin-hoy-1`) before this slice's own branch was cut.
+
+**Open followups.** None.

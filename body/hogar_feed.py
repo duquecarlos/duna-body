@@ -26,6 +26,20 @@ class RangoDemasiadoLargo(Exception):
 
 MAX_SERIE_DIAS = 366
 
+# Hogar's draft contract body-pesaje-v1 (BODY-HOGAR-PESAJE-HOY-1): "weighed today" is this one
+# metric, named once here, so a Garmin Index S2 sync later lands on the same key with no new code.
+PESAJE_METRICA = "body_weight_kg"
+
+
+def _registrado_en_dia(conn, person_id: int, metric_key: str, dia: date) -> bool:
+    """True when `metric_key` has a stored row for exactly `dia` (any source) in
+    daily_metric_efectiva -- one SELECT EXISTS, never the value itself."""
+    row = conn.execute(
+        "SELECT EXISTS(SELECT 1 FROM daily_metric_efectiva WHERE person_id = ? AND metric_key = ? "
+        "AND day = ?) AS v", (person_id, metric_key, dia.isoformat()),
+    ).fetchone()
+    return bool(row["v"])
+
 
 def _metric_defs(conn) -> dict[str, dict]:
     """Every metric_def row's own `kind` and `unit`, keyed by `key` -- one query, shared by
@@ -226,7 +240,8 @@ def manana(conn, person_id: int, dia: date, ahora: datetime) -> dict:
     `ahora` is the person's own local wall-clock now (the route's `_ahora_local`), used only to
     decide which `comidas.faltan` moments have already passed when `dia` is today.
     BODY-HOGAR-METAS-INGESTA-1 adds `metas`. BODY-HOGAR-PLAN-RANGO-1 adds `plan_bloque` -- `plan`
-    itself is unchanged."""
+    itself is unchanged. BODY-HOGAR-PESAJE-HOY-1 adds `pesaje_hoy`, a yes/no for Hogar's draft
+    contract body-pesaje-v1, so Hogar can show a weigh-in line without reading the value."""
     defs = _metric_defs(conn)
     horizonte = _horizonte_actual(conn, person_id, dia)
     return {
@@ -238,6 +253,7 @@ def manana(conn, person_id: int, dia: date, ahora: datetime) -> dict:
         "turnos": turnos_alrededor(conn, person_id, dia),
         "comidas": _comidas(conn, person_id, dia, ahora),
         "metas": _metas(conn, person_id, dia, defs),
+        "pesaje_hoy": _registrado_en_dia(conn, person_id, PESAJE_METRICA, dia),
     }
 
 

@@ -179,7 +179,62 @@ class MananaTest(unittest.TestCase):
         ])
         self.assertIsNone(out["horizonte"])
         self.assertEqual(set(out.keys()),
-                          {"dia", "figuras", "plan", "plan_bloque", "horizonte", "turnos", "comidas", "metas"})
+                          {"dia", "figuras", "plan", "plan_bloque", "horizonte", "turnos", "comidas", "metas",
+                           "pesaje_hoy"})
+
+
+# ---- hogar_feed.manana's `pesaje_hoy` key (BODY-HOGAR-PESAJE-HOY-1) -----------------------------
+
+class PesajeHoyTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = _reset_db(self, "pesaje_hoy.db")
+
+    def test_true_when_a_weight_is_stored_on_dia(self):
+        db.set_metric(self.conn, "2026-11-15", "body_weight_kg", 80.0, "self", 1)
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertIs(out["pesaje_hoy"], True)
+
+    def test_false_when_the_latest_weight_is_an_earlier_day(self):
+        db.set_metric(self.conn, "2026-11-10", "body_weight_kg", 80.0, "self", 1)
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertIs(out["pesaje_hoy"], False)
+        by_key = {f["metric_key"]: f for f in out["figuras"]}
+        self.assertEqual(by_key["body_weight_kg"]["day"], "2026-11-10")
+
+    def test_false_with_no_weight_at_all(self):
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertIs(out["pesaje_hoy"], False)
+
+    def test_true_for_a_non_self_source_row_on_dia(self):
+        db.set_metric(self.conn, "2026-11-15", "body_weight_kg", 79.5, "garmin", 1)
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertIs(out["pesaje_hoy"], True)
+
+    def test_two_people_never_mix(self):
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'B')")
+        db.set_metric(self.conn, "2026-11-15", "body_weight_kg", 80.0, "self", 2)
+        self.conn.commit()
+        out = hogar_feed.manana(self.conn, 1, date(2026, 11, 15), _AHORA)
+        self.assertIs(out["pesaje_hoy"], False)
+
+    def test_route_json_has_pesaje_hoy_as_a_json_boolean(self):
+        from body import cuenta, dispositivo, web
+        from fastapi.testclient import TestClient
+        from unittest import mock as _mock
+        import os as _os
+        patcher_env = _mock.patch.dict(_os.environ, {cuenta.ISSUER_ENV: "https://fake-cuenta.test"})
+        patcher_env.start()
+        self.addCleanup(patcher_env.stop)
+        key = dispositivo.crear(self.conn, 1, "PC", {"hogar:leer"})
+        db.set_metric(self.conn, "2026-11-15", "body_weight_kg", 80.0, "self", 1)
+        self.conn.commit()
+        client = TestClient(web.app, follow_redirects=False)
+        r = client.get("/api/hogar/manana?dia=2026-11-15", headers={"Authorization": f"Bearer {key}"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIs(r.json()["pesaje_hoy"], True)
 
 
 # ---- hogar_feed.manana's `plan_bloque` key (BODY-HOGAR-PLAN-RANGO-1) ----------------------------
