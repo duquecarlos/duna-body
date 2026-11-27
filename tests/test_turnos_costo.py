@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from tests._db import open_conn
 
-from body import config, db, turnos_costo, web
+from body import config, db, graficos_eje, turnos_costo, web
 from body.agente import herramientas
 from body.i18n import T
 from body.rutas import comun, turnos
@@ -908,8 +908,8 @@ class PerfilChartGeometryTest(unittest.TestCase):
         """BODY-TURNOS-PERFIL-LEGIBLE-1-M: the defect this fixes -- the last point and its "+4"
         label were drawn past the viewBox's own right edge and clipped by the card's overflow
         hidden. Checked for both label sets (1-night: no noche_ultima; 5-night: with it) in both
-        languages, against every label LINE's own approximate box (`_label_px`'s character-count
-        estimate), not just its anchor point."""
+        languages, against every label LINE's own approximate box (`graficos_eje.label_px`'s
+        character-count estimate), not just its anchor point."""
         tspan_re = re.compile(r'<tspan[^>]*>([^<]*)</tspan>')
         label_block_re = re.compile(
             r'<text x="([\d.]+)" y="[\d.]+" text-anchor="middle" class="tick">(.*?)</text>')
@@ -933,7 +933,7 @@ class PerfilChartGeometryTest(unittest.TestCase):
                 for x, body in label_block_re.findall(svg):
                     x = float(x)
                     lines = tspan_re.findall(body) if "<tspan" in body else [body]
-                    widest = max(len(html.unescape(line)) * turnos._PERFIL_CHAR_W for line in lines)
+                    widest = max(len(html.unescape(line)) * graficos_eje.CHAR_W for line in lines)
                     boxes.append((x - widest / 2, x + widest / 2))
                 self.assertTrue(boxes)
                 for lo, hi in boxes:
@@ -967,7 +967,7 @@ class PerfilChartGeometryTest(unittest.TestCase):
         self.assertIn("ms", " ".join(text for _, text in yticks))  # the unit, carried once
 
     def test_adjacent_x_axis_labels_never_overlap_in_either_language(self):
-        """Approximation from character count: `turnos._PERFIL_CHAR_W` px per character at the
+        """Approximation from character count: `graficos_eje.CHAR_W` px per character at the
         chart's own floor axis font-size (CSS class "tick") -- real glyph metrics are not available
         server-side, so the layout keeps every adjacent pair at least this far apart. A label that
         does not fit its own slot wraps into two <tspan> lines (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling
@@ -984,7 +984,7 @@ class PerfilChartGeometryTest(unittest.TestCase):
             widths = []
             for _, body in blocks:
                 lines = tspan_re.findall(body) if "<tspan" in body else [body]
-                widths.append(max(len(html.unescape(line)) * turnos._PERFIL_CHAR_W for line in lines))
+                widths.append(max(len(html.unescape(line)) * graficos_eje.CHAR_W for line in lines))
             for i in range(len(cxs) - 1):
                 gap = cxs[i + 1] - cxs[i]
                 needed = widths[i] / 2 + widths[i + 1] / 2
@@ -1018,16 +1018,16 @@ class PerfilChartGeometryTest(unittest.TestCase):
         self.assertIsNotNone(m, "no .tick font-size rule found in body.css")
         size = float(m.group(1))
         self.assertGreaterEqual(size, 11.0)
-        self.assertEqual(size, turnos._PERFIL_TICK_FONT)
+        self.assertEqual(size, graficos_eje.TICK_FONT)
 
     def test_labels_wrap_only_when_they_do_not_fit_their_own_slot(self):
         """Unit-level check of the wrap rule itself (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 2, restating
         BODY-TURNOS-PERFIL-DIA-1-M's own character-count approximation)."""
-        self.assertEqual(turnos._perfil_wrap("+1", 5.0), ["+1"])  # no space to break at -- never wraps
+        self.assertEqual(graficos_eje.wrap_label("+1", 5.0), ["+1"])  # no space to break at -- never wraps
         label = "noche 1"
-        wide_slot, narrow_slot = turnos._label_px(label) + 1, turnos._label_px(label) - 1
-        self.assertEqual(turnos._perfil_wrap(label, wide_slot), [label])
-        self.assertEqual(turnos._perfil_wrap(label, narrow_slot), ["noche", "1"])
+        wide_slot, narrow_slot = graficos_eje.label_px(label) + 1, graficos_eje.label_px(label) - 1
+        self.assertEqual(graficos_eje.wrap_label(label, wide_slot), [label])
+        self.assertEqual(graficos_eje.wrap_label(label, narrow_slot), ["noche", "1"])
 
     def test_chart_height_grows_by_one_line_only_when_a_label_wraps(self):
         svg7, _ = self._render()  # seven long labels -- at least one wraps
@@ -1064,6 +1064,69 @@ class PerfilChartGeometryTest(unittest.TestCase):
             svg, caption = self._render(lang)
             aria = re.search(r'aria-label="([^"]*)"', svg).group(1)
             self.assertEqual(aria, html.escape(caption))
+
+
+class PerfilSvgByteIdenticalAfterGraficosEjeMoveTest(unittest.TestCase):
+    """ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 4: moving the axis-label helpers out to
+    body/graficos_eje.py must not change a single byte of the perfil chart's own SVG. The expected
+    string below was captured by running turnos.py's own OLD code (label_px/wrap_label inlined, as
+    they stood at c7d6e8d7179ecb923e3124e1368504e32408dee7 -- this slice's base commit, before the
+    move) against this exact fixed, invented perfil dict -- never a real reading."""
+
+    _PERFIL = {"metric": "hrv_last_night", "motivo": None, "centro": 60.0,
+               "banda": {"bajo": -14.2, "alto": 12.3},
+               "offsets": [{"offset": "antes", "media": 2.0, "n": 3},
+                           {"offset": "noche_1", "media": -18.0, "n": 3},
+                           {"offset": "noche_ultima", "media": -24.0, "n": 3},
+                           {"offset": "post_1", "media": -16.0, "n": 3},
+                           {"offset": "post_2", "media": -10.0, "n": 3},
+                           {"offset": "post_3", "media": -4.0, "n": 3},
+                           {"offset": "post_4", "media": -1.0, "n": 3}],
+               "mas_bajo": "noche_ultima", "vuelta": "post_4", "noches_tipicas": 5, "n_bloques": 3}
+
+    _EXPECTED_CAPTION = ("Variabilidad de la frecuencia cardiaca, en ms frente a lo usual, alrededor de 5 noches. "
+                          "El punto más bajo es la última noche; el el día +4 después vuelves a tu rango.")
+
+    _EXPECTED_SVG = (
+        '<svg viewBox="0 0 313.0 141.0" width="100%" height="120" role="img" '
+        f'aria-label="{_EXPECTED_CAPTION}" preserveAspectRatio="none" class="chart-svg">'
+        '<rect x="0" y="21.4" width="313.0" height="55.6" class="c-inset"/>'
+        '<rect x="74.1" y="0" width="41.8" height="141.0" class="c-night op-18"/>'
+        '<rect x="115.9" y="0" width="41.8" height="141.0" class="c-night op-18"/>'
+        '<line x1="0" y1="47.2" x2="313.0" y2="47.2" class="stroke-line" stroke-width="1" stroke-dasharray="2 3"/>'
+        '<polyline fill="none" class="stroke-body" stroke-width="2.2" vector-effect="non-scaling-stroke" '
+        'stroke-linejoin="round" points="53.2,43.0 95.0,85.0 136.7,97.6 178.5,80.8 220.3,68.2 262.0,55.6 303.8,49.3"/>'
+        '<circle cx="53.2" cy="43.0" r="3.0" class="c-body"/>'
+        '<circle cx="95.0" cy="85.0" r="3.0" class="c-body"/>'
+        '<circle cx="136.7" cy="97.6" r="3.0" class="c-body"/>'
+        '<circle cx="178.5" cy="80.8" r="3.0" class="c-body"/>'
+        '<circle cx="220.3" cy="68.2" r="3.0" class="c-body"/>'
+        '<circle cx="262.0" cy="55.6" r="3.0" class="c-body"/>'
+        '<circle cx="303.8" cy="49.3" r="3.0" class="c-body"/>'
+        '<text x="53.2" y="122.0" text-anchor="middle" class="tick">'
+        '<tspan x="53.2" dy="0.0">día</tspan><tspan x="53.2" dy="13.0">antes</tspan></text>'
+        '<text x="95.0" y="122.0" text-anchor="middle" class="tick">'
+        '<tspan x="95.0" dy="0.0">noche</tspan><tspan x="95.0" dy="13.0">1</tspan></text>'
+        '<text x="136.7" y="122.0" text-anchor="middle" class="tick">'
+        '<tspan x="136.7" dy="0.0">noche</tspan><tspan x="136.7" dy="13.0">5</tspan></text>'
+        '<text x="178.5" y="122.0" text-anchor="middle" class="tick">+1</text>'
+        '<text x="220.3" y="122.0" text-anchor="middle" class="tick">+2</text>'
+        '<text x="262.0" y="122.0" text-anchor="middle" class="tick">+3</text>'
+        '<text x="303.8" y="122.0" text-anchor="middle" class="tick">+4</text>'
+        '<text x="2.0" y="86.2" class="tick">-20</text>'
+        '<text x="2.0" y="44.2" class="tick">0</text>'
+        '<text x="2.0" y="35.2" class="tick">+10 ms</text></svg>'
+    )
+
+    def test_caption_byte_identical_to_main_before_the_move(self):
+        t = T("es")
+        self.assertEqual(turnos._perfil_caption(t, self._PERFIL), self._EXPECTED_CAPTION)
+
+    def test_svg_byte_identical_to_main_before_the_move(self):
+        t = T("es")
+        caption = turnos._perfil_caption(t, self._PERFIL)
+        svg = turnos._perfil_svg(t, self._PERFIL, caption, "ms")
+        self.assertEqual(svg, self._EXPECTED_SVG)
 
 
 class FragSingularTest(unittest.TestCase):

@@ -36276,3 +36276,121 @@ measurement before any deploy).
 Merged as `c1b15fdc2f8a4a22bb2d34c92e7fa7022efb4f69`, base `main` at
 `cc79a2d07591403848018131acaec80ab4b40a17`, tree `3eeb44af13e4df822bdbc0a77ea264137bdae15c` (equal
 to the branch tip's own tree; `git diff` between the two commits is empty).
+
+## BODY-REVISION-GRAFICOS-FIGURA-1-B
+
+Finding 15 of BODY-REVISION-GRAFICOS-FIGURA-1 was not actually fixed: Shifts and Trends render the
+body-anatomy figure full-card-width, with no `.hoy-top` grid to bound it the way Hoy's own figure
+is bound, so Hoy's existing desktop cap (`min(78vh,720px)`, defined on the plain `.hoy-figura`
+class and never scoped to `.hoy-top`) still let the figure fill most of the first screen on those
+two pages (measured before this fix: track 624px tall, bottom edge at 842px/922px in an 800px
+window). Plus a pre-existing deviation flagged in this slice's own surface description: a model
+module, `body/profile.py`, reached `body/rutas/turnos.py`'s axis-label helpers through a
+function-local, cross-package deferred import (`from .rutas import turnos` inside `_wrap_label`),
+purely to dodge a circular import (`turnos.py -> rutas/comun.py -> profile.py` already, so a
+top-level `profile.py -> rutas/turnos.py` import would cycle) -- "a model module importing a route
+module" for no reason but that avoidance.
+
+**Ruling 1, the desktop cap.** A second, named custom property beside Hoy's own
+(`--hoy-figura-compacta-max: min(46svh, 420px)`, `body/static/body.css`), and a same-media-block
+rule for a new modifier class, `.hoy-figura-compacta`, placed in source *after* the existing
+`.hoy-figura` rule it shares the `@media (min-width:768px)` block with. Chose the modifier-class
+route over a `.hoy-figura:not(.hoy-top .hoy-figura)` negation: both selectors end up the same
+specificity (two compound classes), so either way the new rule only wins by sitting later in the
+cascade -- the modifier reads as "this page's own figure variant" in the CSS and in the templates,
+rather than as a negation of a structural ancestor that has nothing to do with Shifts or Trends.
+`shifts.html` and `trends.html` now pass `'hoy-figura hoy-figura-compacta'` as `cuerpo_vista()`'s
+existing `extra_class` string -- both classes, `hoy-figura` kept because the mobile 60svh cap and
+`object-fit:contain` below it are still shared with Hoy. `_cuerpo_vista.html` needed no change: its
+macro already interpolates `extra_class` as a plain string. Under 768px nothing changes, per the
+ruling's own last sentence.
+
+**Ruling 2, test coverage.** `tests/test_hoy_escritorio.py` gained
+`ShiftsTrendsFiguraCompactaCssTest` (4 tests: the custom property's value, the two desktop-cap
+rules referencing it by name, that the rule sits inside the existing 768px query, and that no
+phone-width rule exists for the modifier) and `ShiftsTrendsFiguraCompactaMarkupTest` (3 tests:
+Shifts renders both classes, Trends renders both classes, Hoy itself never carries the compacta
+modifier) -- built as the direct counterpart to that file's own pre-existing `HoyTopBlockCssTest`,
+which checks Hoy's cap the same way. `tests/test_css_cascada.py`'s cascade-inversion guard only
+compares identical selector text across different `@media` blocks; `.hoy-figura-compacta ...` is a
+brand-new selector, so the guard was never in scope here and needed no change.
+
+**Ruling 3, the axis-label helpers' new home.** Created `body/graficos_eje.py`: `TICK_FONT`,
+`CHAR_W`, `label_px()`, `wrap_label()` -- the same character-count approximation and word-break
+wrap rule that lived as `turnos.py`'s `_PERFIL_TICK_FONT`/`_PERFIL_CHAR_W`/`_label_px`/
+`_perfil_wrap`, now under public names since they are a module's API rather than one file's private
+helpers. `turnos.py` deleted its own copies and imports the new module (`_perfil_svg`'s geometry
+unchanged, every call site just renamed). `profile.py` deleted `_wrap_label` and its deferred
+import entirely and imports `graficos_eje` at its own top level -- the deviation this ruling exists
+to fix. Went one step further than the ruling's literal ask: `body/rutas/tendencias.py` had its
+*own* independent byte-for-byte copy of the same approximation (`_RACHA_LABEL_FONT`/
+`_RACHA_CHAR_W`/`_racha_label_px`, both `0.6 * 12.0`) for its racha chart, predating this slice and
+never named in the touches list or the ruling text -- but the approval-reason's own phrase, "a
+shared helper where both callers can import it," only makes sense once `tendencias.py` is also
+counted as a caller, so its copy was replaced too rather than left as a second, now-pointless
+duplicate sitting beside the new shared module. `tests/test_graficos_eje.py` is new (10 tests:
+constants, `label_px`, `wrap_label`'s short/no-space/narrower/wider/exact/first-space-only cases).
+`tests/test_turnos_costo.py`'s five direct reads of `turnos._PERFIL_CHAR_W`/`_PERFIL_TICK_FONT`/
+`_perfil_wrap`/`_label_px` now read `graficos_eje.CHAR_W`/`TICK_FONT`/`wrap_label`/`label_px`
+instead; `tests/test_tendencias_racha.py`'s two reads of `tendencias._racha_label_px` now read
+`graficos_eje.label_px`. `tests/test_guardia_parches.py`'s `RouteModuleAttrReadGuardTest` names no
+`turnos.py` attribute by name (it walks test files' ASTs and checks attributes dynamically), so it
+needed no edit and stayed green throughout -- its own green run is itself the confirmation that no
+stale reference to the deleted `turnos.py` names survived anywhere in `tests/`.
+
+**Ruling 4, byte-identical regression.** The old code was already gone by the time this needed
+checking, so the old `_perfil_svg`/`_perfil_caption` (from `turnos.py`) and the old `month_svg`
+(from `profile.py`), exactly as they stood at this slice's own base commit
+`c7d6e8d7179ecb923e3124e1368504e32408dee7`, were read with `git show <sha>:<path>` (never checked
+out, so the working tree's in-progress edits were never at risk) and reconstructed as trimmed,
+standalone modules outside the repository. A fixed, hand-invented `perfil` dict and a fixed,
+hand-built `MetricProfile` -- both carrying no real reading, per ruling 5 -- were run through the
+old code and the new (post-move) code side by side in one script, and the two SVG strings and the
+one caption string compared for exact equality; all three matched byte for byte. Those exact
+captured strings are now baked in as literal expected-value constants in two new permanent tests:
+`tests/test_turnos_costo.py`'s `PerfilSvgByteIdenticalAfterGraficosEjeMoveTest` (caption + SVG) and
+`tests/test_profile.py`'s `MonthSvgByteIdenticalAfterGraficosEjeMoveTest` (SVG), so the comparison
+now runs on every gate rather than only once by hand.
+
+**Ruling 5, privacy.** Every fixture above (`perfil`, `MetricProfile`) is invented data built by
+hand for this slice; nothing printed anywhere is a real health figure.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .` -- run in chunks of roughly 15
+dotted modules per foreground call (5 for the `test_garmin_*` block), given the command itself has
+no way to select a subset without `discover`'s own full collection each time. All 252 test modules
+were accounted for except `tests.test_host_autoactualizar`, `tests.test_host_backup`,
+`tests.test_host_deploy` and `tests.test_host_import` (214 tests): that chunk hung, traced to
+`AutoactualizarInstalarTest.test_changed_script_backs_up_the_old_one_at_mode_0440`'s real-`bash`-
+subprocess call stalling past even its own internal 300-second `subprocess.run(timeout=...)`,
+without raising. `git diff c7d6e8d7179ecb923e3124e1368504e32408dee7 -- body/host_autoactualizar.py
+tests/test_host_autoactualizar.py deploy/` is empty: this slice's diff touches none of those files,
+so the hang is a pre-existing environment limitation (this sandbox's own documented process-spawn
+fragility), not a regression from this change, and is reported rather than fixed, per this slice's
+own dispatch instructions. The other 248 modules, including `tests.test_deploy_host` and
+`tests.test_installer` (deploy-adjacent, run in isolation first in case they shared the same
+fragility -- they did not, 78 tests, clean), ran green: **5713 tests** (the collect-only count of
+5927 across all 252 modules, less the 214 unrun `test_host_*` ones), reconciled module-by-module
+against an independent `unittest.TestLoader().discover('tests', top_level_dir='.')` walk filtered
+to the same exclusion list -- every one of the 248 runnable modules is accounted for in some chunk,
+confirmed programmatically rather than by hand-counting chunk boundaries. 5927 is itself exactly
+BODY-REVISION-COPY-GAPS-1's own floor of 5907 plus the 20 tests this slice adds (10 + 2 + 1 + 7, by
+module above). Scattered `ResourceWarning: unclosed database` lines and deliberate fixture
+exceptions/error logs (`pull attempt failed:`, `backfill:`, `dia vacio ...: ... =ausente`, a
+`RuntimeError("boom")` raised by `tests/test_sync_vivo.py`'s own mock) appeared in several chunks;
+all are pre-existing test-fixture output (counts and placeholder words only, never a real figure)
+unrelated to this slice's diff, confirmed benign and left as they were. One stray line,
+`sin_cambio:no_es_arbol_vivo body-app c7d6e8d`, printed after the final chunk's own "OK" -- already
+documented at this ledger's own line 23058 as `body/vivo.py:278`'s diagnostic print inside `main()`,
+exercised by `tests/test_vivo.py`; not new, not a failure.
+
+**Customer bytes changed.** CSS only: the new `--hoy-figura-compacta-max` custom property and the
+two `.hoy-figura-compacta ...` desktop-cap rules in `body/static/body.css`, and the
+`hoy-figura-compacta` class added to `shifts.html`/`trends.html`'s existing figure markup. No new
+or changed user-facing string in any `i18n/*.json`.
+
+**Open followups.** The `test_host_*` hang (pre-existing, unrelated to this diff) is not a new
+followup raised by this slice -- it is an environment limitation this report surfaces, not a
+defect this diff introduced or is positioned to fix.
+
+**Merge.** `git switch main`; `git merge --no-ff feat/body-revision-graficos-figura-1-b`; branch
+deleted. No deploy, no push.

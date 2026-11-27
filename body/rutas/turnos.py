@@ -11,7 +11,7 @@ from urllib.parse import parse_qs
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, baselines, db, identity, patron_turnos, readiness, shift_import, turno_fc, turnos_costo
+from .. import anatomia, baselines, db, graficos_eje, identity, patron_turnos, readiness, shift_import, turno_fc, turnos_costo
 from ..i18n import T
 from ..lector import Lector
 from . import comun
@@ -230,20 +230,6 @@ _PERFIL_LABEL_DY = 13      # baseline offset below the plot area for the x-axis 
 _PERFIL_BOTTOM_PAD = 6
 _PERFIL_WRAP_LINE_HEIGHT = 13  # px a wrapped label's second line sits below its first, and how much
                                # the chart's own height grows -- only when at least one label wraps
-# BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 1: the app's own small-text floor, read from body.css --
-# .fs-12 (12px) is the smallest of the general small-text classes (.k is 13px), and the axis text
-# (CSS class "tick") is set to this size, never below the ruling's own 11px floor.
-_PERFIL_TICK_FONT = 12.0
-_PERFIL_CHAR_W = 0.6 * _PERFIL_TICK_FONT  # approx glyph width (px) at the tick font-size -- an
-                           # approximation from character count, since real glyph metrics are not
-                           # available server-side; generous enough that two labels' approximate
-                           # boxes never touch (restated from BODY-TURNOS-PERFIL-DIA-1-M's own 0.6em
-                           # estimate, now against the floor font-size instead of the old 10px one).
-                           # Reused, not copied, by profile.py's own end-of-range labels
-                           # (BODY-REVISION-GRAFICOS-FIGURA-1 finding 10) through a deferred import
-                           # there -- this module cannot import profile.py at top level, since
-                           # profile.py -> (nothing) but comun.py -> profile.py and this module ->
-                           # comun.py, so the reverse direction would be circular.
 _PERFIL_LABEL_GAP = 4.0    # minimum clear gap kept between two adjacent x-axis label boxes
 _PERFIL_GUTTER_PAD = 6.0   # clearance between the widest y-tick text and the plot area
 _PERFIL_EDGE_PAD = 2.0     # inside the viewBox's own left/right edge
@@ -315,22 +301,6 @@ def _perfil_ticks(rango_bajo: float, rango_alto: float) -> tuple[float, float]:
     return bajo, alto
 
 
-def _label_px(s: str) -> float:
-    return len(s) * _PERFIL_CHAR_W
-
-
-def _perfil_wrap(label: str, slot: float) -> list[str]:
-    """One line unless `label`'s approximate width (`_label_px`, the same character-count
-    estimate BODY-TURNOS-PERFIL-DIA-1-M used) exceeds its own slot -- the point pitch minus the
-    label gap -- in which case it breaks at its (single) space into two lines, each centred on the
-    point (BODY-TURNOS-PERFIL-LEGIBLE-1 ruling 2): "day / before", "noche / 1". A label with no
-    space to break at (the "+1".."+4" post-offsets) always stays one line."""
-    if _label_px(label) <= slot or " " not in label:
-        return [label]
-    i = label.index(" ")
-    return [label[:i], label[i + 1:]]
-
-
 def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str = "body") -> str:
     """Server-rendered SVG (Body's CSP forbids inline style/script): the band as a light rect, the
     night offsets shaded, a line through each offset's own mean with a point per offset, an x-axis
@@ -342,10 +312,11 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
 
     The viewBox width is FIXED at _PERFIL_WIDTH (ruling 1) -- it never grows with a label's length.
     The point pitch is therefore fixed too; a label wider than its own slot (the pitch minus
-    _PERFIL_LABEL_GAP) wraps into two lines instead (`_perfil_wrap`, ruling 2), so two labels'
-    approximate boxes -- `_label_px`, a character-count estimate -- still never overlap, whatever
-    language or offsets are in play. The chart's own height grows by _PERFIL_WRAP_LINE_HEIGHT only
-    when at least one label actually wrapped.
+    _PERFIL_LABEL_GAP) wraps into two lines instead (`graficos_eje.wrap_label`, ruling 2), so two
+    labels' approximate boxes -- `graficos_eje.label_px`, a character-count estimate, shared with
+    profile.py's end-of-range labels and tendencias.py's racha chart (ORCH-CARLOS-DELEGATES-TIER-1-1)
+    -- still never overlap, whatever language or offsets are in play. The chart's own height grows
+    by _PERFIL_WRAP_LINE_HEIGHT only when at least one label actually wrapped.
 
     The first and last point sit INSET from the viewBox's own left/right edge (BODY-TURNOS-PERFIL-
     LEGIBLE-1-M): unlike an interior point, neither has a neighbour on its outer side for the
@@ -375,19 +346,20 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     texto_alto = _perfil_tick(t, tick_alto, unit if tick_alto != 0 else "")
     texto_bajo = _perfil_tick(t, tick_bajo, unit if tick_alto == 0 and tick_bajo != 0 else "")
     texto_cero = _perfil_tick(t, 0.0, unit if tick_alto == 0 and tick_bajo == 0 else "")
-    gutter = _PERFIL_EDGE_PAD + max(_label_px(s) for s in (texto_alto, texto_cero, texto_bajo)) + _PERFIL_GUTTER_PAD
+    gutter = (_PERFIL_EDGE_PAD + max(graficos_eje.label_px(s) for s in (texto_alto, texto_cero, texto_bajo))
+              + _PERFIL_GUTTER_PAD)
 
     plot_left = gutter + _PERFIL_EDGE_PAD
     plot_right = width - _PERFIL_EDGE_PAD
     step = (plot_right - plot_left) / (len(offsets) - 1)
     slot = step - _PERFIL_LABEL_GAP
-    lineas = [_perfil_wrap(label, slot) for label in labels]
+    lineas = [graficos_eje.wrap_label(label, slot) for label in labels]
 
     # First pass's slot is the widest the pitch will ever be, so the wrap it produced is a safe
     # upper bound on the first/last label's final width -- wrapping only ever narrows a label, so
     # sizing the edge inset from this pass is never an underestimate once the pitch shrinks below.
     def _borde(lineas_label: list[str]) -> float:
-        ancho = max(_label_px(linea) for linea in lineas_label)
+        ancho = max(graficos_eje.label_px(linea) for linea in lineas_label)
         return max(ancho / 2, _PERFIL_POINT_R) + _PERFIL_EDGE_PAD
 
     plot_right = width - _borde(lineas[-1])
@@ -398,7 +370,7 @@ def _perfil_svg(t: T, perfil: dict, caption: str, unit: str, *, color_cls: str =
     def cx(i: int) -> float:
         return plot_left + i * step
 
-    lineas = [_perfil_wrap(label, slot) for label in labels]
+    lineas = [graficos_eje.wrap_label(label, slot) for label in labels]
     height = _PERFIL_HEIGHT + (_PERFIL_WRAP_LINE_HEIGHT if any(len(ls) > 1 for ls in lineas) else 0.0)
 
     out = [f'<rect x="0" y="{y(banda["alto"]):.1f}" width="{width:.1f}" '

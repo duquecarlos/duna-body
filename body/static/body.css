@@ -28,6 +28,12 @@
   /* BODY-HOY-ESCRITORIO-1 ruling 1: Hoy's own top-row right column width, named once rather than
      repeated as a literal 280px/400px wherever the grid or its figure cap need it. */
   --hoy-figura-min:280px; --hoy-figura-max:400px; --hoy-figura-parte:36%;
+  /* ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: Shifts/Trends' own desktop cap -- Hoy's figure sits
+     beside the day's data inside the `.hoy-top` grid (its own column width already bounds it), but
+     Shifts and Trends render the figure full-card-width with no such grid, so Hoy's own 78vh/720px
+     cap (below) still left it filling the first screen there. One value, named once, never three
+     literals repeated at each of its two call sites (`.hoy-figura-compacta`'s track/3d-track rules). */
+  --hoy-figura-compacta-max:min(46svh,420px);
   /* BODY-AVATAR-3D-VISOR-1 ruling 6: the 3D viewer's own hatch (the "limited" look) and organ
      tint -- the mock's own two tokens, read with getComputedStyle, never hardcoded in the JS. */
   --cuerpo3d-raya:#8F8C86; --cuerpo3d-organo:#D98E98;
@@ -558,6 +564,12 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
   .hoy-top{display:grid;grid-template-columns:minmax(0,1fr) clamp(var(--hoy-figura-min),var(--hoy-figura-parte),var(--hoy-figura-max));gap:16px;align-items:start}
   .hoy-figura .cuerpo-vista-track{max-height:min(78vh,720px)}
   .hoy-figura .cuerpo3d-track{max-height:min(78vh,720px)}
+  /* ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 1: Shifts/Trends pass this SECOND class alongside
+     `hoy-figura` (never in place of it -- the mobile 60svh cap and `object-fit:contain` below are
+     still shared); same specificity as the rule above, so this one wins by source order alone,
+     the same mechanism BODY-HOY-ESCRITORIO-1-C's own comment warns about, used on purpose here. */
+  .hoy-figura-compacta .cuerpo-vista-track{max-height:var(--hoy-figura-compacta-max)}
+  .hoy-figura-compacta .cuerpo3d-track{max-height:var(--hoy-figura-compacta-max)}
 }
 /* Phone-only (BODY-HOY-ESCRITORIO-1-C): scoped by max-width, below the >=768px block above, so the
    desktop/tablet cap (`min(78vh,720px)`) is the one that wins from 768px -- unscoped, this rule sat
