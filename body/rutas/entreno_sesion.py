@@ -12,7 +12,8 @@ from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import anatomia, checkin_sesion, db, entreno_sesion, esfuerzo_sesion, history, identity, recuperacion
+from .. import anatomia, ayuno_entreno, checkin_sesion, db, entreno_sesion, esfuerzo_sesion, history, identity, \
+    recuperacion
 from ..i18n import T
 from . import comun
 
@@ -145,6 +146,64 @@ def _figuras_ctx(t: T, a: dict, comp: dict) -> list[dict]:
         if f is not None:
             out.append(f)
     return out
+
+
+# ORCH-CARLOS-DELEGATES-TIER-1-1 ruling 2: the fasted-vs-fed note line and comparison card --
+# ayuno_entreno.py (this slice's own model) carries the figures, this module words them.
+_AYUNO_ESTADO_KEY = {"en_ayunas": "entreno_sesion.ayuno.en_ayunas", "alimentado": "entreno_sesion.ayuno.alimentado"}
+_AYUNO_BUCKET_KEY = {"en_ayunas": "entreno_sesion.ayuno.bucket.en_ayunas",
+                     "alimentado": "entreno_sesion.ayuno.bucket.alimentado"}
+_AYUNO_FIGURA_LABEL_KEY = {
+    "avg_hr": "entreno_sesion.avg_hr", "max_hr": "entreno_sesion.max_hr", "calories": "entreno_sesion.calorias",
+    "zona_alta": "entreno_sesion.ayuno.figura.zona_alta", "caida": "entreno_sesion.ayuno.figura.caida",
+}
+_AYUNO_FIGURA_ORDEN = ("avg_hr", "max_hr", "calories", "zona_alta", "caida")
+
+
+def _ayuno_nota_ctx(t: T, conn, person_id: int, a: dict) -> str | None:
+    if not a["start_local"]:
+        return None
+    horas = ayuno_entreno.horas_desde_comida(conn, person_id, a["start_local"])
+    if horas is None:
+        return None
+    nombre = "en_ayunas" if horas >= ayuno_entreno.MODELO["umbral_horas"] else "alimentado"
+    return t("entreno_sesion.ayuno.nota", dur=t.minutes(round(horas * 60)), estado=t(_AYUNO_ESTADO_KEY[nombre]))
+
+
+def _ayuno_valor_txt(t: T, key: str, valor: float | None) -> str | None:
+    if valor is None:
+        return None
+    if key == "calories":
+        return f"{t.num(round(valor))} kcal"
+    if key == "zona_alta":
+        return f"{t.num(round(valor * 100))}%"
+    return f"{t.num(round(valor))} {t('unit.bpm')}"  # avg_hr, max_hr, caida (a bpm drop)
+
+
+def _ayuno_figuras_ctx(t: T, comp: dict) -> list[dict]:
+    en, com = comp["en_ayunas"], comp["alimentado"]
+    out = []
+    for key in _AYUNO_FIGURA_ORDEN:
+        v_en, v_com = _ayuno_valor_txt(t, key, en.get(key)), _ayuno_valor_txt(t, key, com.get(key))
+        if v_en is None and v_com is None:
+            continue
+        out.append({"label": t(_AYUNO_FIGURA_LABEL_KEY[key]), "texto": v_en or "—",
+                    "habitual": t("entreno_sesion.ayuno.vs_alimentado", valor=v_com) if v_com else None})
+    return out
+
+
+def _ayuno_faltan_ctx(t: T, comp: dict) -> str | None:
+    """Ruling 2: when exactly one bucket qualifies, how many more sessions of the OTHER kind Body
+    needs -- None when both qualify (the card above speaks instead) or neither does (an honest
+    gap with no figure to name yet)."""
+    en, com = comp.get("en_ayunas"), comp.get("alimentado")
+    if (en is None) == (com is None):
+        return None
+    falta = "alimentado" if en is not None else "en_ayunas"
+    n = entreno_sesion.HISTORIAL_MIN - comp["n"][falta]
+    bucket = t(_AYUNO_BUCKET_KEY[falta])
+    return (t("entreno_sesion.ayuno.faltan_one", bucket=bucket) if n <= 1
+            else t("entreno_sesion.ayuno.faltan_other", n=t.num(n), bucket=bucket))
 
 
 def _peso_txt(t: T, s: dict) -> str | None:
@@ -523,6 +582,16 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
     dolor_msg = t("entreno_sesion.dolor_guardado") if request.query_params.get("dolor_guardado") == "1" else None
     checkin = _checkin_ctx(t, conn, person_id, a, request.query_params.get("checkin_editar") == "1")
 
+    ayuno_nota = _ayuno_nota_ctx(t, conn, person_id, a)
+    ayuno_comparacion_titulo = ayuno_figuras = ayuno_faltan = None
+    comp_ayuno = ayuno_entreno.comparar(conn, person_id, a)
+    if comp_ayuno is not None:
+        if comp_ayuno["en_ayunas"] is not None and comp_ayuno["alimentado"] is not None:
+            ayuno_comparacion_titulo = t("entreno_sesion.ayuno.comparacion_titulo")
+            ayuno_figuras = _ayuno_figuras_ctx(t, comp_ayuno)
+        else:
+            ayuno_faltan = _ayuno_faltan_ctx(t, comp_ayuno)
+
     return comun._render(
         "entreno_sesion.html", t=t, tab="today", day=d.isoformat(), source_id=source_id, turnos=turnos_on,
         nombre=_nombre(t, a), tipo_label=tipo_label, date_long=t.long_date(d),
@@ -533,6 +602,8 @@ def entreno_sesion_view(day: str, source_id: str, request: Request,
         pulso_pendiente=t("entreno_sesion.curva_pendiente"),
         recovery=_recovery_line(t, recuperacion_row), esfuerzo=esfuerzo,
         dolor=dolor, dolor_msg=dolor_msg, escala=_ESCALA_OPCIONES, checkin=checkin,
+        ayuno_nota=ayuno_nota, ayuno_comparacion_titulo=ayuno_comparacion_titulo,
+        ayuno_figuras=ayuno_figuras, ayuno_faltan=ayuno_faltan,
     )
 
 

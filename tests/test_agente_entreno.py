@@ -624,7 +624,7 @@ class LeerEntrenoUltimaVezTest(unittest.TestCase):
         sesion = out["sesiones"][0]
         self.assertEqual(set(sesion),
                          {"dia", "titulo", "fuente", "hora_inicio", "tipo", "duracion_min", "series",
-                          "ultima_vez", "dolor", "esfuerzo", "checkin"})
+                          "ultima_vez", "dolor", "esfuerzo", "checkin", "ayuno"})
         self.assertEqual(sesion["dia"], "2026-11-10")
         self.assertEqual(sesion["series"][0]["ejercicio"], "press banca")
         self.assertEqual(sesion["series"][0]["repeticiones"], 10)
@@ -636,6 +636,39 @@ class LeerEntrenoUltimaVezTest(unittest.TestCase):
         self.conn.commit()
         out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-12"}, "completo")
         self.assertIsNone(out["sesiones"][0]["ultima_vez"]["curl de bíceps"])
+
+
+class LeerEntrenoAyunoTest(unittest.TestCase):
+    """BODY-AYUNO-ENTRENO-1 ruling 4: `leer_entreno`'s own `ayuno` key -- honestly None when no
+    timed meal is known, the hours and the model's own fasted/fed label otherwise."""
+
+    def setUp(self):
+        self.conn = _conn(self)
+        _insert_activity(self.conn, 1, "a1", "2026-11-10")
+        self.conn.commit()
+
+    def test_honestly_none_with_no_meal_logged(self):
+        out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-10"}, "completo")
+        ayuno = out["sesiones"][0]["ayuno"]
+        self.assertIsNone(ayuno["horas"])
+        self.assertIsNone(ayuno["etiqueta"])
+        self.assertIn("modelo", ayuno)
+
+    def test_fed_label_under_the_threshold(self):
+        db.registrar_ingesta(self.conn, 1, "2026-11-10", "protein_g", 20.0, False, ts_local="2026-11-10T05:00:00")
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-10"}, "completo")
+        ayuno = out["sesiones"][0]["ayuno"]
+        self.assertAlmostEqual(ayuno["horas"], 2.0)
+        self.assertEqual(ayuno["etiqueta"], "alimentado")
+
+    def test_fasted_label_at_or_above_the_threshold(self):
+        db.registrar_ingesta(self.conn, 1, "2026-11-09", "protein_g", 20.0, False, ts_local="2026-11-09T23:00:00")
+        self.conn.commit()
+        out = herramientas.ejecutar(self.conn, 1, "leer_entreno", {"day": "2026-11-10"}, "completo")
+        ayuno = out["sesiones"][0]["ayuno"]
+        self.assertAlmostEqual(ayuno["horas"], 8.0)
+        self.assertEqual(ayuno["etiqueta"], "en_ayunas")
 
 
 class LeerHoySenalesTest(unittest.TestCase):

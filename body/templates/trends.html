@@ -98,6 +98,24 @@
 </div>
 {% endif %}
 
+{% if ayuno %}
+<div class="card" id="ayuno">
+  <div class="q">{{ ayuno.titulo }}</div>
+  {% if ayuno.ventana %}<p class="note mt-4">{{ ayuno.ventana }}</p>{% endif %}
+  {% for grupo in ayuno.tipos %}
+  <div class="mt-8">
+    <div class="k">{{ grupo.tipo_txt }}</div>
+    <ul class="list">
+    {% for f in grupo.figuras %}
+      <li><span class="k">{{ f.label }}</span><br>{{ f.en_ayunas }}<br><span class="note">{{ f.alimentado }}</span></li>
+    {% endfor %}
+    </ul>
+  </div>
+  {% endfor %}
+  {% if ayuno.faltan %}<p class="note mt-8 mb-0">{{ ayuno.faltan }}</p>{% endif %}
+</div>
+{% endif %}
+
 {% if extra_groups %}
 <details class="files mt-10"{% if todas %} open{% endif %}>
   <summary class="k">{{ t('trends.ver_todas', n=extra_count) }}</summary>

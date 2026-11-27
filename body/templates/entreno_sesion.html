@@ -11,6 +11,20 @@
 {% if dolor_msg %}<p class="note" role="status">{{ dolor_msg }}</p>{% endif %}
 {% if detalle %}<p class="read mt-0">{{ detalle }}</p>{% endif %}
 {% if recovery %}<p class="note">{{ recovery }}</p>{% endif %}
+{% if ayuno_nota %}<p class="note">{{ ayuno_nota }}</p>{% endif %}
+
+{% if ayuno_comparacion_titulo %}
+<div class="card">
+  <p class="note mt-0">{{ ayuno_comparacion_titulo }}</p>
+  <ul class="list">
+  {% for f in ayuno_figuras %}
+    <li><span class="k">{{ f.label }}</span><br>{{ f.texto }}{% if f.habitual %}<br><span class="note">{{ f.habitual }}</span>{% endif %}</li>
+  {% endfor %}
+  </ul>
+</div>
+{% elif ayuno_faltan %}
+<p class="note">{{ ayuno_faltan }}</p>
+{% endif %}
 
 {% if figuras or sin_historial %}
 <div class="card">

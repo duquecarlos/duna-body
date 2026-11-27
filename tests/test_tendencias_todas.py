@@ -13,6 +13,7 @@ from tests._db import open_conn
 
 from body import config, db, identity, profile, readiness, web
 from body.agente import herramientas
+from body.i18n import T
 from body.rutas import comun
 
 PERSON_B = 2
@@ -279,6 +280,83 @@ class ReadinessChartReachesTheSameEndAsOtherSeriesTest(unittest.TestCase):
         self.assertIsNotNone(p_readiness)
         self.assertIsNotNone(p_resting_hr)
         self.assertEqual(p_readiness.months[-1][0], p_resting_hr.months[-1][0])
+
+
+def _activity(conn, person_id: int, source_id: str, day: str, start_local: str, type_: str = "running",
+              avg_hr: float | None = None) -> None:
+    conn.execute(
+        "INSERT INTO activity (person_id, source_id, day, start_local, type, avg_hr, source) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'garmin')",
+        (person_id, source_id, day, start_local, type_, avg_hr),
+    )
+
+
+class TrendsAyunoCardTest(unittest.TestCase):
+    """BODY-AYUNO-ENTRENO-1 ruling 3: Trends' own aggregate card, "Your fasted sessions vs. fed" --
+    omitted outright with no training session at all, and its three states otherwise (both
+    buckets, the fast-window figure alone, or its honest empty line)."""
+
+    def setUp(self):
+        self.orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig_db_path))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "ayuno_trends.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        # Trends shows the "not synced yet" page with no metric data at all -- enough of the
+        # default cards for the page itself to render past that early return.
+        _seed_days(self.conn, 1, "resting_hr", "2026-01-01", 20, 58, -0.2)
+        _seed_days(self.conn, 1, "sleep_minutes", "2026-01-01", 20, 410, 1)
+        self.conn.commit()
+        _as(1)
+        self.client = TestClient(web.app, follow_redirects=False)
+
+    def _seed_pool(self, n_ayunas: int, n_alimentado: int) -> None:
+        from datetime import date, timedelta
+        cursor = date(2026, 1, 2)
+        for i in range(n_ayunas):
+            day = cursor.isoformat()
+            _activity(self.conn, 1, f"ayunas-{i}", day, f"{day}T07:00:00", avg_hr=150 + i)
+            dia_ant = (cursor - timedelta(1)).isoformat()
+            db.registrar_ingesta(self.conn, 1, dia_ant, "protein_g", 20.0, False, ts_local=f"{dia_ant}T22:00:00")
+            cursor += timedelta(1)
+        for i in range(n_alimentado):
+            day = cursor.isoformat()
+            _activity(self.conn, 1, f"alim-{i}", day, f"{day}T07:00:00", avg_hr=130 + i)
+            db.registrar_ingesta(self.conn, 1, day, "protein_g", 20.0, False, ts_local=f"{day}T05:00:00")
+            cursor += timedelta(1)
+        self.conn.commit()
+
+    def test_card_omitted_with_no_training_session_at_all(self):
+        page = self.client.get("/trends").text
+        self.assertNotIn('id="ayuno"', page)
+
+    def test_both_buckets_show_rows(self):
+        self._seed_pool(n_ayunas=3, n_alimentado=3)
+        page = self.client.get("/trends").text
+        t_es = T("es")
+        self.assertIn('id="ayuno"', page)
+        self.assertIn(t_es("trends.ayuno.titulo"), page)
+        bpm = t_es("unit.bpm")
+        self.assertIn(t_es("trends.ayuno.fila_en_ayunas", valor=f"{t_es.num(151)} {bpm}"), page)
+        self.assertIn(t_es("trends.ayuno.fila_alimentado", valor=f"{t_es.num(131)} {bpm}"), page)
+
+    def test_only_the_fast_window_when_no_type_qualifies_on_both_buckets(self):
+        self._seed_pool(n_ayunas=3, n_alimentado=0)  # all three fasted exactly 9h -- median 9.0
+        page = self.client.get("/trends").text
+        t_es = T("es")
+        self.assertIn('id="ayuno"', page)
+        self.assertIn(t_es("trends.ayuno.ventana", horas=t_es.minutes(9 * 60)), page)
+        self.assertIn(t_es("trends.ayuno.faltan"), page)
+
+    def test_honest_empty_line_when_nothing_qualifies_at_all(self):
+        _activity(self.conn, 1, "solo", "2026-01-05", "2026-01-05T07:00:00", avg_hr=140)
+        self.conn.commit()
+        page = self.client.get("/trends").text
+        t_es = T("es")
+        self.assertIn('id="ayuno"', page)
+        self.assertIn(t_es("trends.ayuno.faltan"), page)
 
 
 if __name__ == "__main__":

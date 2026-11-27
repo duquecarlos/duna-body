@@ -1015,5 +1015,85 @@ class DolorCardTest(unittest.TestCase):
         self.assertEqual(r.status_code, 404)
 
 
+class AyunoCardTest(unittest.TestCase):
+    """BODY-AYUNO-ENTRENO-1 ruling 2: the fasted-vs-fed note line and comparison card."""
+
+    def setUp(self):
+        self.conn = _reset_db(self, "ayuno.db")
+        _as(self, 1)
+
+    def _seed_historia(self, n_ayunas: int, n_alimentado: int) -> None:
+        """Earlier RUNNING sessions, each on its own day from 2026-01-02, before "today" (2026-02-02):
+        `n_ayunas` with a meal 9h before start, `n_alimentado` with one 2h before."""
+        cursor = date(2026, 1, 2)
+        for i in range(n_ayunas):
+            day = cursor.isoformat()
+            _activity(self.conn, 1, f"ayunas-{i}", day, f"{day}T07:00:00", "running", None, 1500.0,
+                      avg_hr=150 + i)
+            dia_ant = (cursor - timedelta(1)).isoformat()
+            db.registrar_ingesta(self.conn, 1, dia_ant, "protein_g", 20.0, False, ts_local=f"{dia_ant}T22:00:00")
+            cursor += timedelta(1)
+        for i in range(n_alimentado):
+            day = cursor.isoformat()
+            _activity(self.conn, 1, f"alim-{i}", day, f"{day}T07:00:00", "running", None, 1500.0,
+                      avg_hr=130 + i)
+            db.registrar_ingesta(self.conn, 1, day, "protein_g", 20.0, False, ts_local=f"{day}T05:00:00")
+            cursor += timedelta(1)
+        self.conn.commit()
+
+    def test_note_line_absent_without_a_known_meal(self):
+        _activity(self.conn, 1, "today", "2026-02-02", "2026-02-02T07:00:00", "running", None, 1500.0, avg_hr=140)
+        r = client.get("/day/2026-02-02/entreno/today")
+        t_es = T("es")
+        self.assertNotIn(_es("entreno_sesion.ayuno.en_ayunas"), r.text)
+        self.assertNotIn(_es("entreno_sesion.ayuno.alimentado"), r.text)
+
+    def test_note_line_shows_hours_and_the_fasted_label(self):
+        db.registrar_ingesta(self.conn, 1, "2026-02-01", "protein_g", 20.0, False, ts_local="2026-02-01T23:00:00")
+        _activity(self.conn, 1, "today", "2026-02-02", "2026-02-02T07:00:00", "running", None, 1500.0, avg_hr=140)
+        self.conn.commit()
+        r = client.get("/day/2026-02-02/entreno/today")
+        t_es = T("es")
+        nota = _es("entreno_sesion.ayuno.nota").format(dur=t_es.minutes(8 * 60),
+                                                       estado=_es("entreno_sesion.ayuno.en_ayunas"))
+        self.assertIn(nota, r.text)
+
+    def test_note_line_shows_the_fed_label_under_the_threshold(self):
+        db.registrar_ingesta(self.conn, 1, "2026-02-02", "protein_g", 20.0, False, ts_local="2026-02-02T05:00:00")
+        _activity(self.conn, 1, "today", "2026-02-02", "2026-02-02T07:00:00", "running", None, 1500.0, avg_hr=140)
+        self.conn.commit()
+        r = client.get("/day/2026-02-02/entreno/today")
+        t_es = T("es")
+        nota = _es("entreno_sesion.ayuno.nota").format(dur=t_es.minutes(2 * 60),
+                                                       estado=_es("entreno_sesion.ayuno.alimentado"))
+        self.assertIn(nota, r.text)
+
+    def test_comparison_card_shown_when_both_buckets_qualify(self):
+        self._seed_historia(n_ayunas=3, n_alimentado=3)
+        _activity(self.conn, 1, "today", "2026-02-02", "2026-02-02T07:00:00", "running", None, 1500.0, avg_hr=140)
+        r = client.get("/day/2026-02-02/entreno/today")
+        t_es = T("es")
+        self.assertIn(_es("entreno_sesion.ayuno.comparacion_titulo"), r.text)
+        bpm = t_es("unit.bpm")
+        self.assertIn(f"{t_es.num(151)} {bpm}", r.text)  # median of 150, 151, 152
+        self.assertIn(_es("entreno_sesion.ayuno.vs_alimentado").format(valor=f"{t_es.num(131)} {bpm}"), r.text)
+
+    def test_need_more_line_shown_when_only_one_bucket_qualifies(self):
+        self._seed_historia(n_ayunas=3, n_alimentado=1)
+        _activity(self.conn, 1, "today", "2026-02-02", "2026-02-02T07:00:00", "running", None, 1500.0, avg_hr=140)
+        r = client.get("/day/2026-02-02/entreno/today")
+        t_es = T("es")
+        self.assertNotIn(_es("entreno_sesion.ayuno.comparacion_titulo"), r.text)
+        bucket = t_es("entreno_sesion.ayuno.bucket.alimentado")
+        self.assertIn(_es("entreno_sesion.ayuno.faltan_other").format(n=t_es.num(2), bucket=bucket), r.text)
+
+    def test_neither_note_nor_card_without_any_history(self):
+        _activity(self.conn, 1, "today", "2026-02-02", "2026-02-02T07:00:00", "running", None, 1500.0, avg_hr=140)
+        r = client.get("/day/2026-02-02/entreno/today")
+        t_es = T("es")
+        self.assertNotIn(_es("entreno_sesion.ayuno.comparacion_titulo"), r.text)
+        self.assertNotIn(_es("entreno_sesion.ayuno.bucket.alimentado"), r.text)
+
+
 if __name__ == "__main__":
     unittest.main()
