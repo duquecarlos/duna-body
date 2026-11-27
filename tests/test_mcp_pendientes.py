@@ -75,17 +75,18 @@ class VigenciaTest(_BaseTest):
         creada = ahora - timedelta(minutes=10)
         expira = creada + timedelta(minutes=15)
         cid, _ = _crear_propuesta_mcp_con_vigencia(self.conn, self.person_id, creada, expira)
-        n, resuelto = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=ahora)
+        n, resuelto, expira_min = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=ahora)
         self.assertEqual(n, 1)
         self.assertEqual(resuelto, cid)
+        self.assertEqual(expira_min, expira.isoformat(timespec="seconds"))
 
     def test_expired_sixteen_minutes_in_is_not_counted_and_today_shows_no_line(self):
         ahora = datetime(2026, 11, 18, 9, 0, tzinfo=timezone.utc)
         creada = ahora - timedelta(minutes=16)
         expira = creada + timedelta(minutes=15)
         _, propuesta_id = _crear_propuesta_mcp_con_vigencia(self.conn, self.person_id, creada, expira)
-        n, resuelto = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=ahora)
-        self.assertEqual((n, resuelto), (0, None))
+        n, resuelto, expira_min = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=ahora)
+        self.assertEqual((n, resuelto, expira_min), (0, None, None))
         # Today's own line reads the real clock, not the injected one above: place the same row's
         # expira_en just before the real wall clock so the end-to-end page carries no line either,
         # with no sleeping.
@@ -111,9 +112,9 @@ class VigenciaTest(_BaseTest):
                                (registro["id"],)).fetchone()["expira_en"])
         poco_antes = propia_expira - timedelta(minutes=1)
         poco_despues = propia_expira + timedelta(minutes=1)
-        n_antes, id_antes = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=poco_antes)
+        n_antes, id_antes, _ = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=poco_antes)
         self.assertEqual((n_antes, id_antes), (1, cid))
-        n_despues, id_despues = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=poco_despues)
+        n_despues, id_despues, _ = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=poco_despues)
         self.assertEqual((n_despues, id_despues), (0, None))
 
     def test_newest_conversation_id_skips_an_expired_newer_one(self):
@@ -125,7 +126,7 @@ class VigenciaTest(_BaseTest):
             self.conn, self.person_id, ahora - timedelta(minutes=1), ahora - timedelta(seconds=30),
             start_day="2020-02-01")
         self.assertGreater(cid_nueva, cid_vieja)
-        n, resuelto = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=ahora)
+        n, resuelto, _ = agente_conversacion.pendientes_mcp(self.conn, self.person_id, ahora=ahora)
         self.assertEqual((n, resuelto), (1, cid_vieja))
 
     def test_statement_count_of_today_does_not_grow(self):

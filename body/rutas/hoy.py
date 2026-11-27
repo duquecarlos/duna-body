@@ -17,7 +17,7 @@ from markupsafe import Markup
 from .. import (anatomia, captura_sueno, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes,
                 garmin_cuenta, goals, history, horizonte, household, identity, musculo, noche_inusual,
                 nutriente_objetivo, pull, readiness, recuperacion, reentrada, registro_cobertura, turnos_costo,
-                tutoriales, ventana_comida, viajes)
+                tutoriales, ventana_comida, vence, viajes)
 from ..agente import conversacion as agente_conversacion
 from ..agente import herramientas as agente_herramientas
 from ..agente import propuestas as agente_propuestas
@@ -304,12 +304,13 @@ def _periodo_sigue_ctx(t: T, conn, person_id: int, today_local: date) -> dict | 
 
 
 def _mcp_pendientes_ctx(conn, person_id: int) -> dict | None:
-    """BODY-MCP-LOCAL-1-B: Hoy's own line while the person's personal assistant (the local MCP
-    server) has proposed something still waiting in the chat panel -- None while there is none, so
-    the line never shows an empty count. `conversacion_id` is the newest such conversation, for the
-    line's own link to open the panel on."""
-    n, conversacion_id = agente_conversacion.pendientes_mcp(conn, person_id)
-    return {"n": n, "conversacion_id": conversacion_id} if n else None
+    """BODY-MCP-LOCAL-1-B: the person's personal assistant (the local MCP server) has proposed
+    something still waiting in the chat panel -- None while there is none. `conversacion_id` is
+    the newest such conversation, for the strip's own link to open the panel on; `expira` (BODY-
+    HOY-LO-QUE-VENCE-1) is the soonest of those proposals' own `expira_en`, read by body/vence.py's
+    own "coming due" line for this fact, never a second query of it."""
+    n, conversacion_id, expira = agente_conversacion.pendientes_mcp(conn, person_id)
+    return {"n": n, "conversacion_id": conversacion_id, "expira": expira} if n else None
 
 
 def _mcp_aplicado_ctx(conn, person_id: int, ahora: datetime | None = None) -> dict | None:
@@ -643,10 +644,13 @@ def _plan_semana_bloque(t: T, resumen: dict, today_local: date) -> dict:
     }
 
 
-# BODY-HOY-PENDIENTES-REGISTRO-1 (ORCH-CARLOS-DELEGATES-TIER-1-1): the lower-case, mid-sentence
-# stream words for the one-line note below -- distinct from metas.py's own capitalised
-# `_REGISTRO_LABEL_KEY` (that one opens a "Falta: ..." line; this one sits inside a sentence).
-# `sueno` carries no key here: ruling 3 excludes it before any label is ever looked up.
+# BODY-HOY-PENDIENTES-REGISTRO-1 (ORCH-CARLOS-DELEGATES-TIER-1-1), reused by BODY-HOY-LO-QUE-
+# VENCE-1 ruling 6 for the strip's own "vence.linea.cobertura" line: the lower-case, mid-sentence
+# stream words -- distinct from metas.py's own capitalised `_REGISTRO_LABEL_KEY` (that one opens a
+# "Falta: ..." line; this one sits inside a sentence). `sueno` carries no key here: body/vence.py's
+# own `_lineas_cobertura` drops it before any label is ever looked up (its cadence is 'nightly',
+# neither 'daily' nor 'weekly' -- a missing night is the watch's own sync problem, already Hoy's
+# own sync card).
 _PENDIENTES_STREAM_KEY = {
     "comidas": "today.plan_semana.pendientes_stream.comidas",
     "proteina": "today.plan_semana.pendientes_stream.proteina",
@@ -656,44 +660,15 @@ _PENDIENTES_STREAM_KEY = {
 }
 
 
-def _plan_semana_pendientes_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
-    """Ruling 1-3: one muted line inside "Tu plan esta semana", after its blocks -- what
-    `registro_cobertura.pendientes` says is still missing today and this ISO week, in the
-    person's own register. ONE call to `pendientes` (the caller already knows at least one plan is
-    active); the same {faltan, sin_uso} is repeated under every plan's own goal_id since these
-    streams are the person's, not any one plan's, so only the first value is ever read. `sueno` is
-    dropped before anything else (ruling 3: a missing night is the watch's own sync problem, already
-    surfaced by Hoy's sync card) -- None the instant nothing besides it is missing. `sin_uso`
-    streams are never named (never a nag)."""
-    pendientes = registro_cobertura.pendientes(conn, person_id, today_local)
-    datos = next(iter(pendientes.values()), None)
-    if not datos:
-        return None
-    faltan = [s for s in datos["faltan"] if s != "sueno"]
-    if not faltan:
-        return None
-    cadencia = registro_cobertura.MODELO["cadencia"]
-    hoy_streams = [s for s in faltan if cadencia[s] == "daily"]
-    semana_streams = [s for s in faltan if cadencia[s] == "weekly"]
-    partes = []
-    if hoy_streams:
-        partes.append(t("today.plan_semana.pendientes_hoy",
-                         items=_lista_natural(t, [t(_PENDIENTES_STREAM_KEY[s]) for s in hoy_streams])))
-    if semana_streams:
-        partes.append(t("today.plan_semana.pendientes_semana",
-                         items=_lista_natural(t, [t(_PENDIENTES_STREAM_KEY[s]) for s in semana_streams])))
-    return {"texto": " ".join(partes), "enlace": t("today.plan_semana.pendientes_link")}
-
-
-def _plan_semana_ctx(t: T, conn, person_id: int, today_local: date) -> dict | None:
+def _plan_semana_ctx(t: T, conn, person_id: int, today_local: date, ids: list[int]) -> dict | None:
     """Ruling 2: Today's "Tu plan esta semana" card -- shown only when the person has at least one
-    active plan (`horizonte.horizontes(..., solo_activos=True)`, ruling 1's own definition), right
-    after the day-ahead card. At most PLANES_HOY_MAX blocks, each from one `horizonte.resumen`
-    call (ruling 3: bounded regardless of that plan's own weekly lines, rules, weeks or
-    checkpoints); the rest collapse into one "y N planes más" line to /goals. BODY-HOY-PENDIENTES-
-    REGISTRO-1: one extra `registro_cobertura.pendientes` call, only reached here (never for a
-    person with no active plan), feeds the card's own trailing note."""
-    ids = horizonte.horizontes(conn, person_id, today_local, solo_activos=True)
+    active plan (`ids`, the route's own single `horizonte.horizontes(..., solo_activos=True)` call,
+    BODY-HOY-LO-QUE-VENCE-1 ruling 1: read once, shared with the "coming due" strip, never read
+    twice), right after the day-ahead card. At most PLANES_HOY_MAX blocks, each from one
+    `horizonte.resumen` call (ruling 3: bounded regardless of that plan's own weekly lines, rules,
+    weeks or checkpoints); the rest collapse into one "y N planes más" line to /goals. BODY-HOY-LO-
+    QUE-VENCE-1 ruling 2: this card's own trailing "falta registrar..." note is gone -- the "coming
+    due" strip says each missing stream once, instead."""
     if not ids:
         return None
     bloques = [_plan_semana_bloque(t, horizonte.resumen(conn, gid, person_id, hoy=today_local), today_local)
@@ -705,7 +680,47 @@ def _plan_semana_ctx(t: T, conn, person_id: int, today_local: date) -> dict | No
         mas = t("today.plan_semana.mas", n=t.num(extra))
     else:
         mas = None
-    return {"bloques": bloques, "mas": mas, "pendientes": _plan_semana_pendientes_ctx(t, conn, person_id, today_local)}
+    return {"bloques": bloques, "mas": mas}
+
+
+def _vence_texto(t: T, linea: dict) -> str:
+    """BODY-HOY-LO-QUE-VENCE-1 ruling 6: each line's own words, from its `tipo` and `datos` --
+    literal `t(...)` calls only, never a concatenated key."""
+    tipo, datos = linea["tipo"], linea["datos"]
+    if tipo == "mcp":
+        n = datos["n"]
+        return t("vence.linea.mcp_one") if n == 1 else t("vence.linea.mcp_other", n=t.num(n))
+    if tipo == "cobertura":
+        return t("vence.linea.cobertura", stream=t(_PENDIENTES_STREAM_KEY[datos["stream"]]))
+    if tipo == "checkpoint":
+        return t("vence.linea.checkpoint", titulo=datos["titulo"])
+    return t("vence.linea.deadline", titulo=datos["titulo"])
+
+
+def _vence_ctx(t: T, conn, person_id: int, today_local: date, mcp_pendientes: dict | None,
+               cobertura_pendientes: dict, ids_extra: list[int]) -> dict | None:
+    """BODY-HOY-LO-QUE-VENCE-1: Hoy's own "coming due" strip, directly below the readiness hero --
+    None the instant nothing is due at all (ruling 3: no card, no empty title, no bare [] or {}).
+    `mcp_pendientes` and `cobertura_pendientes` are sources this route already computed for its own
+    other cards (ruling 1); `ids_extra` is the slice of active plan horizons beyond the plan card's
+    own cap, already bounded by vence.VENCE_MODELO's own horizontes_max."""
+    todas = vence.lineas(conn, person_id, today_local, mcp_pendientes=mcp_pendientes,
+                          cobertura_pendientes=cobertura_pendientes,
+                          cadencia=registro_cobertura.MODELO["cadencia"], ids_extra=ids_extra)
+    if not todas:
+        return None
+    max_lineas = vence.VENCE_MODELO["max_lineas"]
+    mostradas = todas[:max_lineas]
+    extra = len(todas) - max_lineas
+    if extra == 1:
+        mas = t("vence.mas_one")
+    elif extra > 0:
+        mas = t("vence.mas_other", n=t.num(extra))
+    else:
+        mas = None
+    lineas_ctx = [{"texto": _vence_texto(t, l), "tiempo": _dia_relativo(t, l["dia"], today_local),
+                   "href": l["href"], "vencido": l["estado"] == "vencido"} for l in mostradas]
+    return {"titulo": t("vence.titulo"), "lineas": lineas_ctx, "mas": mas}
 
 
 def _entrenado_hoy_categorias(conn, person_id: int, today_local: date) -> list:
@@ -986,6 +1001,14 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
         cards.append({"key": k, "label": label, "value": comun._value(t, k, v),
                       "unit": comun._unit(t, defs[k]) if v is not None else "", "delta": delta, "cls": cls,
                       "banda": banda, "caption": caption, "corregido": corregido})
+    # BODY-HOY-LO-QUE-VENCE-1 ruling 1: read once, shared by the plan card and the "coming due"
+    # strip below, never twice. `cobertura_pendientes` only runs with at least one active plan --
+    # the same gate `_plan_semana_ctx` used to apply itself, hoisted here since the strip needs it
+    # too. `ids_extra` is the slice of horizons the plan card does NOT already show a checkpoint/
+    # deadline for, bounded by vence.VENCE_MODELO's own horizontes_max.
+    ids_horizontes = horizonte.horizontes(conn, person_id, today_local, solo_activos=True)
+    cobertura_pendientes = registro_cobertura.pendientes(conn, person_id, today_local) if ids_horizontes else {}
+    ids_extra = ids_horizontes[PLANES_HOY_MAX:]
     return comun._render("today.html", t=t, tab="today", day=day, date_long=t.long_date(date.fromisoformat(day)),
                    synced=sync_hero, stale=_stale_ctx(t, day, today_local),
                    garmin_sync=garmin_rutas._garmin_sync_ctx(t, conn, person_id, day, today_local),
@@ -993,12 +1016,13 @@ def today(background_tasks: BackgroundTasks, person_id: int = Depends(identity.c
                    r=r, reading=_reading(t, r), ready_avg=ready_avg,
                    ready_delta=ready_delta, ready_cls=ready_cls, cards=cards,
                    missing_txt=", ".join(t("part." + m) for m in r.missing), proposed_count=proposed_count,
-                   turno=turno_ctx, turnos=turnos_on, mcp_pendientes=mcp_pendientes, mcp_aplicado=mcp_aplicado,
+                   turno=turno_ctx, turnos=turnos_on, mcp_aplicado=mcp_aplicado,
                    hogar_aplicado=hogar_aplicado,
+                   vence=_vence_ctx(t, conn, person_id, today_local, mcp_pendientes, cobertura_pendientes, ids_extra),
                    experimento_nudge=experimentos.nudge_ayer_ctx(conn, t, person_id, today_local),
                    dia_por_delante=_dia_por_delante_ctx(t, conn, person_id, today_local, turno_de_hoy["hoy"],
                                                          _hhmm_ahora(person)),
-                   plan_semana=_plan_semana_ctx(t, conn, person_id, today_local),
+                   plan_semana=_plan_semana_ctx(t, conn, person_id, today_local, ids_horizontes),
                    semana_nocturna=_semana_nocturna_ctx(t, conn, person_id, today_local),
                    today_iso=today_local.isoformat(),
                    primeros_pasos=primeros_pasos,

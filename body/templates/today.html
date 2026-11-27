@@ -25,9 +25,6 @@
   </div>
 </div>
 {% endif %}
-{% if mcp_pendientes %}
-<div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_pendientes.conversacion_id }}#asis-btn">{{ t('today.mcp_propuestas') if mcp_pendientes.n == 1 else t('today.mcp_propuestas_many', n=mcp_pendientes.n) }}</a></div>
-{% endif %}
 {% if mcp_aplicado %}
 <div class="aviso"><a class="taplink" href="/?asis_conversacion={{ mcp_aplicado.conversacion_id }}#asis-btn">{{ t('today.mcp_aplicado') if mcp_aplicado.n == 1 else t('today.mcp_aplicado_many', n=mcp_aplicado.n) }}</a></div>
 {% endif %}
@@ -84,6 +81,21 @@
   <span class="how">{{ t('today.how') }}</span>
   <span class="chev">›</span>
 </a>
+
+{% if vence %}
+<div class="card">
+  <div class="q">{{ vence.titulo }}</div>
+  <ul class="plan mt-6">
+  {% for l in vence.lineas %}
+    <li class="block{% if l.vencido %} vence-vencido{% endif %}">
+      <a class="taplink" href="{{ l.href }}">{{ l.texto }}</a>
+      <div class="k mt-6">{{ l.tiempo }}</div>
+    </li>
+  {% endfor %}
+  </ul>
+  {% if vence.mas %}<p class="note mt-6 mb-0">{{ vence.mas }}</p>{% endif %}
+</div>
+{% endif %}
 
 {% if primeros_pasos %}{{ primeros_pasos_card(t, primeros_pasos) }}{% endif %}
 
@@ -164,9 +176,6 @@
   {% endfor %}
   </ul>
   {% if plan_semana.mas %}<a class="more mt-6" href="/goals">{{ plan_semana.mas }}</a>{% endif %}
-  {% if plan_semana.pendientes %}
-  <p class="note mt-6 mb-0">{{ plan_semana.pendientes.texto }} <a class="taplink" href="#asis-btn">{{ plan_semana.pendientes.enlace }}</a></p>
-  {% endif %}
 </div>
 {% endif %}
 </div>

@@ -91,6 +91,8 @@ _THIRD_PERSON_ALLOW = {
     "agente.error.despertar_levantado_antes_de_sueno": "'puede' subject is 'la hora de levantarte' "
                                                         "(the time), not the reader",
     "comida.productos.etiqueta_apagada": "'se puede' is an impersonal construction, not usted",
+    "vence.linea.mcp_one": "'tiene' subject is 'tu asistente', not the reader",
+    "vence.linea.mcp_other": "'tiene' subject is 'tu asistente', not the reader",
 }
 
 

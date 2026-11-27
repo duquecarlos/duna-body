@@ -1,8 +1,10 @@
-"""BODY-HOY-PENDIENTES-REGISTRO-1 (ORCH-CARLOS-DELEGATES-TIER-1-1): Hoy's own "Tu plan esta
-semana" card gains one trailing line, computed from `registro_cobertura.pendientes` -- what the
-person's own dated plan still needs logged today and this ISO week, in their own register, muted
-and never a nag. Invented demo data only, built through goals.propose/activate and db.py's own
-writers, the same fixture helpers tests/test_plan_hoy.py and tests/test_registro_cobertura.py use.
+"""BODY-HOY-PENDIENTES-REGISTRO-1 (ORCH-CARLOS-DELEGATES-TIER-1-1): what the person's own dated
+plan still needs logged today and this ISO week, computed from `registro_cobertura.pendientes`.
+BODY-HOY-LO-QUE-VENCE-1 moved this fact off the plan card's own trailing note and into Hoy's
+"Por vencer" strip, one line per missing stream, each with its own link -- these tests now assert
+each stream's own line there instead of the old combined sentence. Invented demo data only, built
+through goals.propose/activate and db.py's own writers, the same fixture helpers
+tests/test_plan_hoy.py and tests/test_registro_cobertura.py use.
 """
 import tempfile
 import unittest
@@ -121,13 +123,14 @@ class AusenteSinPlanTest(unittest.TestCase):
         _reset_db(self)
         page = _get().text
         self.assertNotIn("Tu plan esta semana", page)
-        self.assertNotIn("today.plan_semana.pendientes", page)
-        self.assertNotIn('href="#asis-btn">Reg', page)
+        self.assertNotIn("Por vencer", page)
+        self.assertNotIn("Falta registrar", page)
 
 
 class AusenteNadaFaltaTest(unittest.TestCase):
     """Ruling 3/5: absent when every non-sleep stream is covered -- sueno missing alone changes
-    nothing, since sueno is never asked for here."""
+    nothing, since sueno's own cadence (BODY-HOY-LO-QUE-VENCE-1 ruling 2) is 'nightly', neither
+    'daily' nor 'weekly', so vence.py never gives it a line either."""
 
     def test_only_sueno_missing_gives_no_line(self):
         conn = _reset_db(self)
@@ -136,8 +139,8 @@ class AusenteNadaFaltaTest(unittest.TestCase):
         conn.commit()
         page = _get().text
         self.assertIn("Tu plan esta semana", page)
-        self.assertNotIn("falta registrar hoy", page)
-        self.assertNotIn("Esta semana:", page)
+        self.assertNotIn("Por vencer", page)
+        self.assertNotIn("Falta registrar", page)
 
     def test_nothing_missing_at_all_gives_no_line(self):
         conn = _reset_db(self)
@@ -146,71 +149,79 @@ class AusenteNadaFaltaTest(unittest.TestCase):
         conn.commit()
         page = _get().text
         self.assertIn("Tu plan esta semana", page)
-        self.assertNotIn("falta registrar hoy", page)
-        self.assertNotIn("Esta semana:", page)
+        self.assertNotIn("Por vencer", page)
+        self.assertNotIn("Falta registrar", page)
 
 
 class DailyOnlyTest(unittest.TestCase):
-    def test_daily_only_sentence_es(self):
+    """BODY-HOY-LO-QUE-VENCE-1 ruling 2/6: each missing daily stream is now its own line in the
+    "Por vencer" strip, each its own link -- never one combined sentence."""
+
+    def test_daily_only_lines_es(self):
         conn = _reset_db(self)
         _horizonte(conn)
         _preparar_streams(conn, 1, HOY, faltan={"comidas", "proteina"})
         conn.commit()
         page = _get().text
-        self.assertIn("Para tu plan falta registrar hoy: comidas y proteína.", page)
-        self.assertNotIn("Esta semana:", page)
-        self.assertIn('href="#asis-btn">Regístralo con el asistente</a>', page)
+        self.assertIn("Por vencer", page)
+        self.assertIn('href="#asis-btn">Falta registrar comidas esta semana</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar proteína esta semana</a>', page)
 
-    def test_daily_only_sentence_en(self):
+    def test_daily_only_lines_en(self):
         conn = _reset_db(self)
         conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
         _horizonte(conn)
         _preparar_streams(conn, 1, HOY, faltan={"comidas", "proteina"})
         conn.commit()
         page = _get().text
-        self.assertIn("Your plan still needs today: meals and protein.", page)
-        self.assertNotIn("This week:", page)
-        self.assertIn('href="#asis-btn">Log it with the assistant</a>', page)
+        self.assertIn("Coming due", page)
+        self.assertIn('href="#asis-btn">meals not logged yet this week</a>', page)
+        self.assertIn('href="#asis-btn">protein not logged yet this week</a>', page)
 
 
 class WeeklyOnlyTest(unittest.TestCase):
-    def test_weekly_only_sentence_es(self):
+    def test_weekly_only_line_es(self):
         conn = _reset_db(self)
         _horizonte(conn)
         _preparar_streams(conn, 1, HOY, faltan={"peso"})
         conn.commit()
         page = _get().text
-        self.assertIn("Esta semana: peso.", page)
-        self.assertNotIn("falta registrar hoy", page)
+        self.assertIn('href="#asis-btn">Falta registrar peso esta semana</a>', page)
 
-    def test_weekly_only_sentence_en(self):
+    def test_weekly_only_line_en(self):
         conn = _reset_db(self)
         conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
         _horizonte(conn)
         _preparar_streams(conn, 1, HOY, faltan={"peso"})
         conn.commit()
         page = _get().text
-        self.assertIn("This week: weight.", page)
-        self.assertNotIn("still needs today", page)
+        self.assertIn('href="#asis-btn">weight not logged yet this week</a>', page)
 
 
 class BothPartsTest(unittest.TestCase):
-    def test_both_sentences_joined_es(self):
+    """A daily gap and a weekly gap together are still two separate lines, never joined into one
+    sentence (BODY-HOY-LO-QUE-VENCE-1 ruling 1: one line per dated fact)."""
+
+    def test_daily_and_weekly_both_present_as_separate_lines_es(self):
         conn = _reset_db(self)
         _horizonte(conn)
         _preparar_streams(conn, 1, HOY, faltan={"comidas", "proteina", "peso"})
         conn.commit()
         page = _get().text
-        self.assertIn("Para tu plan falta registrar hoy: comidas y proteína. Esta semana: peso.", page)
+        self.assertIn('href="#asis-btn">Falta registrar comidas esta semana</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar proteína esta semana</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar peso esta semana</a>', page)
 
-    def test_both_sentences_joined_en(self):
+    def test_daily_and_weekly_both_present_as_separate_lines_en(self):
         conn = _reset_db(self)
         conn.execute("UPDATE person SET language = 'en' WHERE id = 1")
         _horizonte(conn)
         _preparar_streams(conn, 1, HOY, faltan={"comidas", "proteina", "peso"})
         conn.commit()
         page = _get().text
-        self.assertIn("Your plan still needs today: meals and protein. This week: weight.", page)
+        self.assertIn('href="#asis-btn">meals not logged yet this week</a>', page)
+        self.assertIn('href="#asis-btn">protein not logged yet this week</a>', page)
+        self.assertIn('href="#asis-btn">weight not logged yet this week</a>', page)
 
 
 class SinUsoNuncaNombradoTest(unittest.TestCase):
@@ -225,7 +236,7 @@ class SinUsoNuncaNombradoTest(unittest.TestCase):
         out = registro_cobertura.pendientes(conn, 1, HOY)
         self.assertIn("cintura", next(iter(out.values()))["sin_uso"])
         page = _get().text
-        self.assertIn("Para tu plan falta registrar hoy: comidas y proteína.", page)
+        self.assertIn('href="#asis-btn">Falta registrar comidas esta semana</a>', page)
         self.assertNotIn("cintura", page)
         self.assertNotIn("waist", page)
 
@@ -272,8 +283,8 @@ class PersonScopeTest(unittest.TestCase):
         _horizonte(conn, person_id=2)
         # Person 2 has gaps; person 1 has no plan at all, so the line must never appear for 1.
         page = _get().text
-        self.assertNotIn("falta registrar hoy", page)
-        self.assertNotIn("Esta semana:", page)
+        self.assertNotIn("Falta registrar", page)
+        self.assertNotIn("Por vencer", page)
 
 
 if __name__ == "__main__":
