@@ -375,20 +375,26 @@ def pull_all(conn, person_id: int) -> tuple[int, date | None]:
     return saved, oldest
 
 
-def _registrar_reloj_si_hay(conn, person_id: int, token: str) -> None:
+def _registrar_reloj_si_hay(conn, person_id: int, token: str) -> datetime | None:
     """BODY-SYNC-VIVO-ESTADO-1 ruling 4: one read-only call for the watch's own last-contact
     instant, after the day fetches, for one person's pull -- a failure never raises (fetch_
     device_last_sync's own contract), so this never fails the caller's pull either. Re-encrypts
     the token only if Garmin refreshed it during this call; only writes reloj_sincronizo_en when
-    a value actually parsed, leaving the last known value in place otherwise."""
+    a value actually parsed, leaving the last known value in place otherwise.
+
+    BODY-SUENO-LLEGADA-1 ruling 2: returns the instant this call read (None on a failed or
+    unparseable read) so `_pull_one_person` can pass the SAME reading on to `llegada_sueno` for
+    whichever day(s) this same call just stored -- never a second Garmin call, and never an older
+    cached value when this one's read failed."""
     reloj, token_after = garmin_adapter.fetch_device_last_sync(token_str=token)
     if token_after != token:
         garmin_cuenta.guardar(conn, person_id, token_after)
     if reloj is not None:
         garmin_cuenta.registrar_reloj_sincronizo(conn, person_id, reloj)
+    return reloj
 
 
-def _pull_one_person(conn, person_id: int, days: list[str]) -> tuple[int, int, dict[str, int]] | None:
+def _pull_one_person(conn, person_id: int, days: list[str], via: str) -> tuple[int, int, dict[str, int]] | None:
     """Pulls `days` for one hosted person, re-encrypting the stored token only if Garmin refreshed
     it -- even when a later day raises, via the try/finally below. Returns (days actually stored,
     days fetched but empty, {feed failure class: count} across every partially-failed day this
@@ -397,13 +403,24 @@ def _pull_one_person(conn, person_id: int, days: list[str]) -> tuple[int, int, d
     raises FeedsFallidos instead of being counted at all. Raises whatever the adapter, Garmin or
     FeedsFallidos raise, with the counts-so-far attached as `.saved`/`.vacios`/`.fallos_parciales`
     on the exception so the caller can still record them; the caller records the error and moves
-    on to the next person."""
+    on to the next person.
+
+    BODY-SUENO-LLEGADA-1 ruling 2: `via` ('diaria'/'hoy'/'demanda'/'conectar', one per caller --
+    the daily hosted pull, the --hoy sweep, the on-demand trigger, and the connect-triggered pull,
+    in that order) names which door this run came in through, for the one `llegada_sueno` row
+    each day whose sleep end is non-empty gets -- a day fetched with an empty sleep end writes
+    nothing there, so an early empty fetch never claims the arrival a later refetch actually sees;
+    `llegada_sueno`'s own first-write-wins INSERT OR IGNORE means a later refetch of an
+    already-claimed night never moves it either way. Recorded AFTER the day loop (in the same
+    `finally` below, even when a later day raised), with the reloj instant THIS SAME call read
+    (`_registrar_reloj_si_hay`, never a second Garmin call)."""
     token = garmin_cuenta.leer(conn, person_id)
     if token is None:
         return None
     token_before = token
     saved = vacios = 0
     fallos_parciales: dict[str, int] = {}
+    llegadas: list[tuple[str, str]] = []
     try:
         for i, d in enumerate(sorted(days)):
             if i:
@@ -415,6 +432,8 @@ def _pull_one_person(conn, person_id: int, days: list[str]) -> tuple[int, int, d
             if fallos:
                 _sumar_fallos(fallos_parciales, fallos)
             db.save_day(conn, data, person_id)
+            if data.sleep_end:
+                llegadas.append((d, data.sleep_end))
             if _dia_vacio(data):
                 vacios += 1
                 print(f"dia vacio {d}: {_forma_feeds(data.raw)}", flush=True)
@@ -428,7 +447,9 @@ def _pull_one_person(conn, person_id: int, days: list[str]) -> tuple[int, int, d
     finally:
         if token != token_before:
             garmin_cuenta.guardar(conn, person_id, token)
-        _registrar_reloj_si_hay(conn, person_id, token)
+        reloj = _registrar_reloj_si_hay(conn, person_id, token)
+        for d, noche_fin in llegadas:
+            db.registrar_llegada_sueno(conn, person_id, d, noche_fin, reloj, via)
     return saved, vacios, fallos_parciales
 
 
@@ -602,7 +623,7 @@ def _registrar_intento_persona(conn, person_id: int, ahora: datetime, exc: Excep
         print(f"pull attempt failed: {errores.texto_seguro_con_estado(exc, estado)}", flush=True)
 
 
-def _pull_persona(conn, person_id: int, days: list[str]) -> dict:
+def _pull_persona(conn, person_id: int, days: list[str], via: str) -> dict:
     """One person's pull-and-postprocess: `_pull_one_person` (which itself handles the token --
     read, refresh, re-encrypt), the error record/clear, and the four post-pull recalcs (BODY-
     REVISION-SYNC-READINESS-1 ruling 1 adds readiness to the existing three) -- shared by
@@ -614,10 +635,13 @@ def _pull_persona(conn, person_id: int, days: list[str]) -> dict:
     "fallos_parciales" every partially-failed day's feed-failure classes (ruling 6) -- all three
     default to 0/{} on "sin_token"/"error" when `_pull_one_person` never got that far. Records
     exactly one attempt (BODY-SYNC-VIVO-ESTADO-1 ruling 3) -- never for "sin_token", which never
-    reached Garmin at all."""
+    reached Garmin at all.
+
+    `via` (BODY-SUENO-LLEGADA-1 ruling 2): passed straight through to `_pull_one_person`, 'diaria'
+    from `pull_hosted`'s own call, 'conectar' from `pull_persona_ahora`'s."""
     ahora = datetime.now(timezone.utc)
     try:
-        resultado = _pull_one_person(conn, person_id, days)
+        resultado = _pull_one_person(conn, person_id, days, via)
     except Exception as e:
         garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
         _registrar_intento_persona(conn, person_id, ahora, e)
@@ -654,7 +678,7 @@ def pull_persona_ahora(person_id: int) -> None:
         db.ensure_ready(conn)
         hoy = fechas.hoy_local(db.person(conn, person_id))
         dias = _dias_pendientes_relleno(conn, person_id, hoy)
-        resultado = _pull_persona(conn, person_id, dias)
+        resultado = _pull_persona(conn, person_id, dias, "conectar")
         print(f"connect pull: {resultado['estado']}, {resultado['saved']} days stored, "
               f"{resultado['vacios']} empty{_sufijo_fallos_parciales(resultado['fallos_parciales'])}"
               f"{_sufijo_reloj(conn, person_id)}",
@@ -668,7 +692,8 @@ def _en_horas_quietas(ahora_local: datetime) -> bool:
     return h >= QUIETA_DESDE_HORA or h < QUIETA_HASTA_HORA
 
 
-def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: datetime) -> tuple[bool, int]:
+def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: datetime, via: str
+                       ) -> tuple[bool, int]:
     """The fetch+record+recalc sequence for one person's "today" alone -- shared by
     `pull_hoy_ahora`'s own trigger and the --hoy sweep (`pull_hoy_todos`), never a copy: fetches
     exactly one day through `_pull_one_person` (the same fetch path, token re-encryption and watch-
@@ -685,10 +710,14 @@ def _pull_hoy_persona(conn, person_id: int, ahora_local: datetime, ahora_utc: da
     recorded, not propagated. Returns (True, days empty) on success, (False, days empty) on a
     Garmin failure -- BODY-GARMIN-DIAGNOSTICO-1 ruling 3: the empty count `_pull_one_person`
     already returns (or attaches to its own exception as `.vacios`, the same contract every other
-    caller here reads), carried out so the --hoy sweep's own line can count it too."""
+    caller here reads), carried out so the --hoy sweep's own line can count it too.
+
+    `via` (BODY-SUENO-LLEGADA-1 ruling 2): passed straight through to `_pull_one_person`, 'hoy'
+    from the sweep's own call (`pull_hoy_todos`), 'demanda' from the on-demand trigger's
+    (`pull_hoy_ahora`)."""
     dia = ahora_local.date().isoformat()
     try:
-        resultado = _pull_one_person(conn, person_id, [dia])
+        resultado = _pull_one_person(conn, person_id, [dia], via)
     except Exception as e:
         garmin_cuenta.registrar_error(conn, person_id, type(e).__name__)
         _registrar_intento_persona(conn, person_id, ahora_utc, e)
@@ -743,7 +772,7 @@ def pull_hoy_todos(conn) -> tuple[int, int, int, int, int, int | None]:
         if not garmin_cuenta.puede_intentar(conn, person_id, ahora_utc, ESPACIO_MIN_HOY):
             en_espera += 1
             continue
-        exito, vacios_persona = _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc)
+        exito, vacios_persona = _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc, "hoy")
         vacios += vacios_persona
         ultima_persona = person_id
         if exito:
@@ -805,7 +834,7 @@ def pull_hoy_ahora(person_id: int) -> str:
             return "espera"
         _PULL_EN_CURSO.add(person_id)
         try:
-            _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc)
+            _pull_hoy_persona(conn, person_id, ahora_local, ahora_utc, "demanda")
             return "iniciado"
         finally:
             _PULL_EN_CURSO.discard(person_id)
@@ -909,7 +938,7 @@ def pull_hosted(conn, *, fecha: str | None = None, n_days: int | None = None) ->
             days, antiguos_persona = _dias_pendientes_relleno(
                 conn, person_id, hoy, n=n_days if n_days is not None else 2, incluir_antiguos=True)
             antiguos += len(antiguos_persona)
-        resultado = _pull_persona(conn, person_id, days)
+        resultado = _pull_persona(conn, person_id, days, "diaria")
         _sincronizar_lugares_seguro(conn, person_id)
         ultima_persona = person_id
         saved += resultado["saved"]
