@@ -37235,3 +37235,10 @@ customer-facing byte. Merged on green without a further stop.
 
 No password, token, session secret or health figure of a real person was read, printed, or written
 anywhere in either slice's own work.
+
+Slice commits `164ab7756d8ea4e2fa689fa2b0aed0b8ded3fa1f` and `eaa44de58f33ab4a88243d9818cc6b7419b73581`
+on `feat/body-hoy-lo-que-vence-pulido-1` (on top of `ab8f0eb8d407633bea6f1ab65bf53be00d91217e`,
+branched from `main` at `351fb2f100aa2f84209dd16dbf410ef3efb920f3`). Merged into `main` with `--no-ff`
+at `cb3692ddb30f362f27b68fc5264efa1a8b34e659`; its tree (`3a59b7f673be68c311f38273db898621913b70f0`)
+matches the slice branch's own tip tree exactly (`git diff` empty), so the gate run above, taken on
+the final tree before the merge, carries over. Branch deleted, repository left on `main`.
