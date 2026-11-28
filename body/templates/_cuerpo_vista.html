@@ -86,7 +86,9 @@
       {% if cuerpo.giro.objetivo %}<p class="cuerpo-caption giro-objetivo-caption">{{ t('cuerpo.giro.objetivo') }}</p>{% endif %}
     </div>
     {% endif %}
-    <div class="cuerpo-vista-btns">
+    {# BODY-CUERPO-SPIN-HOY-PULIDO-1 ruling 1: the extra hook class so giro-interruptor.js can hide
+       this 2D-only row while 3D is on -- its own `.cuerpo-vista-btns` class, and layout, unchanged. #}
+    <div class="cuerpo-vista-btns cuerpo2d-btns">
       {% for v in cuerpo.vistas %}
       <button type="button" class="cuerpo-vista-btn{% if loop.first %} on{% endif %}" data-vista="{{ v.id }}"
               aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ v.label }}</button>

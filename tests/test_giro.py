@@ -5,16 +5,21 @@ database -- body/rutas/hoy.py is the one caller, tested separately in tests/test
 """
 import pathlib
 import re
+import tempfile
 import unittest
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
-from body import anatomia, giro
+from fastapi.testclient import TestClient
+
+from body import anatomia, config, db, fechas, giro, identity, web
 from body.i18n import T
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 ROOT_STATIC_GIRO = None
+
+client = TestClient(web.app, follow_redirects=False)
 
 
 def _T(lang="es"):
@@ -208,6 +213,78 @@ class SpinMarkupHiddenTest(unittest.TestCase):
         html = (ROOT / "body" / "templates" / "_cuerpo_vista.html").read_text(encoding="utf-8")
         self.assertIn('class="giro-leyenda"', html)
         self.assertIn("giro-objetivo-caption", html)
+
+
+class TwoDSelectorHookClassTest(unittest.TestCase):
+    """BODY-CUERPO-SPIN-HOY-PULIDO-1 ruling 1/2: the 2D view selector row (`.cuerpo-vista-btn`
+    buttons + `.cuerpo-vista-swipe`) carries an extra hook class, `cuerpo2d-btns`, so the switch
+    can hide it while 3D is on -- exactly one such row, outside `.cuerpo3d-track`, never inside it
+    (moving it there would feed cuerpo-vista.js's swipe handling on the wrong track)."""
+
+    def setUp(self):
+        self.html = (ROOT / "body" / "templates" / "_cuerpo_vista.html").read_text(encoding="utf-8")
+
+    def test_exactly_one_cuerpo2d_btns_row(self):
+        self.assertEqual(self.html.count("cuerpo2d-btns"), 1)
+
+    def test_the_row_still_carries_its_own_class_and_the_vista_buttons(self):
+        m = re.search(r'<div class="([^"]*\bcuerpo2d-btns\b[^"]*)">', self.html)
+        self.assertIsNotNone(m, "no div carries the cuerpo2d-btns hook class")
+        clases = m.group(1).split()
+        self.assertIn("cuerpo-vista-btns", clases)
+        resto = self.html[m.end():]
+        cierre = resto.index("</div>")
+        bloque = resto[:cierre]
+        self.assertIn("cuerpo-vista-btn", bloque)
+        self.assertIn("cuerpo-vista-swipe", bloque)
+
+    def test_the_row_is_not_inside_the_3d_track(self):
+        inicio_3d = self.html.index('class="cuerpo3d-track"')
+        fin_3d = self.html.index("{% endif %}", inicio_3d)
+        bloque_3d = self.html[inicio_3d:fin_3d]
+        self.assertNotIn("cuerpo2d-btns", bloque_3d)
+
+    def test_giro_interruptor_js_hides_the_row_with_the_same_mode_test_as_the_tracks(self):
+        js = (ROOT / "body" / "static" / "giro-interruptor.js").read_text(encoding="utf-8")
+        self.assertIn('querySelector(".cuerpo2d-btns")', js)
+        self.assertIn("track2d.hidden = modo !== \"2d\";", js)
+        self.assertIn("track3d.hidden = modo !== \"3d\";", js)
+        self.assertIn("btns2d.hidden = modo !== \"2d\";", js)
+
+
+class RenderedHoyCardTwoDSelectorTest(unittest.TestCase):
+    """Ruling 4: the actual Hoy card render -- 2D is the server-side default, so the row carries
+    no `hidden` there; the switch hides it client-side only once giro-interruptor.js runs."""
+
+    def setUp(self):
+        orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = pathlib.Path(tempfile.mkdtemp(dir=TMP)) / "giro_render.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.ensure_ready(self.conn)
+
+    def _hoy_person(self) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO person (display_name, timezone, language) VALUES (?, 'America/Bogota', 'es')", ("P",))
+        self.conn.commit()
+        pid = cur.lastrowid
+        hoy = fechas.hoy_local(db.person(self.conn, pid)).isoformat()
+        db.set_metric(self.conn, hoy, "resting_hr", 55.0, "garmin", pid)
+        self.conn.commit()
+        web.app.dependency_overrides[identity.current_person_id] = (lambda pid=pid: pid)
+        return pid
+
+    def test_exactly_one_unhidden_row_holding_the_vista_buttons(self):
+        self._hoy_person()
+        r = client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.text.count("cuerpo2d-btns"), 1)
+        m = re.search(r'<div class="cuerpo-vista-btns cuerpo2d-btns">(.*?)</div>', r.text, re.S)
+        self.assertIsNotNone(m, "no unhidden cuerpo2d-btns row in the render")
+        self.assertIn("cuerpo-vista-btn", m.group(1))
+        self.assertIn("cuerpo-vista-swipe", m.group(1))
 
 
 class ValueTextAnguloTest(unittest.TestCase):

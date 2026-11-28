@@ -29,6 +29,7 @@
     var seg = card.querySelector(".cuerpo3d-seg");
     var track2d = card.querySelector(".cuerpo-vista-track");
     var track3d = card.querySelector(".cuerpo3d-track");
+    var btns2d = card.querySelector(".cuerpo2d-btns");
     if (!seg || !track2d || !track3d) return;
     var botones = seg.querySelectorAll(".cuerpo3d-btn");
     var iniciado = false;
@@ -45,6 +46,7 @@
     function aplicar() {
       track2d.hidden = modo !== "2d";
       track3d.hidden = modo !== "3d";
+      if (btns2d) btns2d.hidden = modo !== "2d";
       pulsar();
     }
 
