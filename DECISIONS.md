@@ -37034,3 +37034,94 @@ undeployed surface's own `6039`. Merge commit `989292f4776570484f0852a517f827b4d
 
 No password, token, session secret or health figure of a real person was read, printed, or
 written anywhere in this slice's own work.
+
+## BODY-SUENO-LLEGADA-1 / BODY-SUENO-LLEGADA-1.W -- how long Body takes to see a night end, and its census
+
+Carlos, relayed by the desk 27 Nov, before deciding whether to buy a bed-presence sensor: track how
+long it takes Body to detect that he is awake, for multiple days, before adjusting or buying a
+sensor (ORCH-CARLOS-DELEGATES-TIER-1-1). BODY-SUENO-LLEGADA-1 built the surface and stopped BLOCKED,
+correctly, before merging: the whole gate had 9 reds, all from five cross-cutting census/count
+guards outside its own touches -- the new table was not yet classified for export/delete-all/host
+move, and the new tool was missing from the hardcoded registry counts. BODY-SUENO-LLEGADA-1.W
+decides the classification, finishes the gate, and merges.
+
+**The table.** `llegada_sueno` (`person_id`, `day`, `noche_fin`, `primera_llegada_en`,
+`reloj_en_llegada`, `via` CHECK IN `('diaria', 'hoy', 'demanda', 'conectar')`, PRIMARY KEY
+`(person_id, day)`) -- one row per night Body ever saw, first write wins (`db.
+registrar_llegada_sueno`, INSERT OR IGNORE, never UPDATEd), swept at `LLEGADA_RETENCION_DIAS=400`.
+
+**The capture point.** Inside the shared per-person pull (`body/pull.py`'s `_pull_one_person`),
+right after `save_day` stores a night's end, tagged with the caller's own `via` and the
+`reloj_en_llegada` the same pull call already read -- all four vías (`diaria` through
+`pull_hosted`, `hoy` through the sweep, `demanda` through `pull_hoy_ahora`, `conectar` through
+`pull_persona_ahora`) reach it through this one point.
+
+**The report.** `python -m body.llegada_sueno --dias N` (`body/llegada_sueno.py`), printing minute
+gaps only -- never a time of day, never a sleep figure -- split by jornada (trabajo/libre/
+desconocido, reusing `turnos_costo._shift_on`) and vía, with an impossible (negative) gap counted
+apart as `descartadas`, never averaged in.
+
+**The tool.** `leer_llegada_sueno` (nivel 'ninguno', no health figure ever leaves it), optional
+`desde`/`hasta` (bounded, `hasta` never future) -- returns `noches` (`dia`, `noche_fin`,
+`primera_llegada_en`, `via`, `reloj_en_llegada`, `jornada` per night) and `resumen` (the same
+minutes-and-counts `llegada_sueno.resumen_de_filas` the CLI prints, from the same rows).
+
+**This slice's own decision: the table is the person's own data, classified exactly like
+`despertar_correccion`.** `llegada_sueno` joins `FULLY_HANDLED_TABLES` (`body/privacidad.py`);
+`export_person` carries a new `"llegadas_sueno"` key (`day`, `noche_fin`, `primera_llegada_en`,
+`reloj_en_llegada`, `via`, this person's own rows only, never another's); `delete_person` deletes
+it by `person_id` in the same transaction as `despertar_correccion`. `body/mudanza.py` gets
+`TableSpec("llegada_sueno", match_cols=("person_id", "day"))` beside `despertar_correccion`'s own
+entry -- no `tipo` to widen the key with, since this table's own PRIMARY KEY is already
+`(person_id, day)`. The export screen (`body/templates/privacidad.html`) carries no per-section
+i18n label to extend (only `exportar_title`/`exportar_desc`/`exportar_btn`, the download button
+itself) -- so ruling 2's conditional branch applies and no i18n string was added, in either
+`es.json` or `en.json`.
+
+**The tool joins the registry counts.** `leer_llegada_sueno` added to `tests/test_agente_registro.
+py`'s `_all_tool_calls()` dict, its nivel 'ninguno' entry in `expected_levels` (lectura tools: 26 ->
+27), and the two totals (`len(herramientas.HERRAMIENTAS)`: 62 -> 63) -- and to the nivel 'ninguno'
+offered-tools set in `tests/test_agente_bucle.py`'s `NivelDatosEnforcementTest`.
+
+**The census guards.** `tests/test_experimentos_esquema.py`, `tests/test_privacidad.py` and
+`tests/test_mudanza.py`'s own `test_every_table_with_a_person_id_column_is_covered`/
+`test_every_live_table_is_in_the_registry_or_skipped` needed no edit -- they are generic equality
+checks against `privacidad.FULLY_HANDLED_TABLES`/`mudanza.REGISTRY_BY_NAME`, satisfied once the
+production code above accounts for the table. `tests/test_persona_fuga.py`'s `TableCensusTest`
+does require one: its own `_seed_person` fixture must seed at least one row in every
+`FULLY_HANDLED_TABLES` entry, so one `db.registrar_llegada_sueno` call joined the existing
+`db.guardar_despertar_correccion` seed there, same census treatment, no marker needed.
+
+**Tests.** Three new tests in `tests/test_llegada_sueno.py` (24 -> 28, invented data only): export
+carries this person's own rows under `"llegadas_sueno"` and none of another person's; delete-all
+leaves no row for this person and keeps the other person's; a host move (one `mudanza.importar`
+round-trip, PC install -> hosted destination) carries the row, counted by the registry report's own
+`insert` count.
+
+**No customer-facing bytes.** No schema change (the table was created in BODY-SUENO-LLEGADA-1's own
+merge-pending commit, carried unchanged by this slice), no cross-repo contract. Merge policy A's
+three conditions all clear -- this slice merges on green, as its approval reason's own last
+sentence allows.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, the whole suite, run in 28
+foreground chunks (heavy modules -- `test_garmin_*`/`test_host_*` -- chunked by 5, the rest by 10;
+one chunk ran over the 600s foreground cap, finished in the background at 607s, and was read back
+before continuing): 68, 166, 228, 25, 227, 195, 206, 320, 224, 136, 251, 217, 157, 220, 315, 228,
+246, 267, 267, 282, 274, 300, 204, 139, 239, 303, 205, 165. **6074 tests, every chunk green** (no
+failures, no errors; the many "pull attempt failed: ...", "dia vacio ...", "lugares: sin
+conectar", "mcp ... error: ...", "asistente: propuesta ... no se pudo mostrar (KeyError)" and
+similar lines are deliberate fixture output from tests this slice never touched, no figure of a
+real person), summing exactly to a collect-only count of **6074** taken independently on the same
+final tree via `unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()` --
+exactly `6046 + 24 + 4`: the prior merged-and-deployed surface's own `6046`, the 24 tests
+BODY-SUENO-LLEGADA-1 added, and the 4 tests this slice added, confirming no other drift.
+
+Slice commit `7ff6de90c73d2c22669693ce61aa4b59da6e3706` on `feat/body-sueno-llegada-1` (branched
+from `main` at `49304036b2da865dd3fe4a2dabbe97469975d782`, the same base BODY-SUENO-LLEGADA-1 itself
+branched from). Merged into `main` with `--no-ff` at `760506fce92be3a32b21e28e86843fe2c08977b8`; its
+tree (`a59c2333488909941583fd76dd0a098eccfb039c`) matches the slice branch's own tip tree exactly
+(`git diff` empty), so the gate run above, taken on the final tree before the merge, carries over.
+Branch deleted, repository left on `main`.
+
+No password, token, session secret or health figure of a real person was read, printed, or written
+anywhere in this slice's own work.
