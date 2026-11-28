@@ -4,6 +4,7 @@ module never mutates body.config's process-wide BODY_HOME for tests that run aft
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import statistics
 import sys
@@ -472,6 +473,13 @@ class DemoHoyPendientesTest(unittest.TestCase):
         self.assertIn("Por vencer", r.text)
         self.assertIn("Falta registrar hoy: proteína", r.text)
         self.assertIn('href="#asis-btn">Falta registrar hoy: proteína</a>', r.text)
+        # BODY-HOY-LO-QUE-VENCE-PULIDO-2 ruling 1: the orchestrator's own nit on this exact
+        # render -- the line said "hoy" twice (the sentence, then a <span class="k">hoy</span>
+        # beside it). The day is named once now.
+        m = re.search(r'<li class="vence-linea[^"]*">.*?href="#asis-btn">Falta registrar hoy: '
+                       r'proteína</a>.*?</li>', r.text, re.S)
+        self.assertIsNotNone(m)
+        self.assertNotIn('class="k"', m.group(0))
 
 
 class PlanHorizonteSeedTest(unittest.TestCase):

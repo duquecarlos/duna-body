@@ -700,6 +700,17 @@ def _vence_texto(t: T, linea: dict) -> str:
     return t("vence.linea.deadline", titulo=datos["titulo"])
 
 
+def _vence_tiempo(t: T, linea: dict, hoy: date) -> str:
+    """BODY-HOY-LO-QUE-VENCE-PULIDO-2 ruling 1: a cobertura line's own `cadencia` decides, never a
+    comparison of rendered strings -- a `daily` stream's words already say "today"
+    (`vence.linea.cobertura_hoy`), so its relative time is empty here and the template leaves the
+    `<span class="k">` out entirely rather than rendering it blank. Every other line kind, and a
+    weekly cobertura line, keeps `vence.cuando` exactly as before."""
+    if linea["tipo"] == "cobertura" and linea["datos"]["cadencia"] == "daily":
+        return ""
+    return vence.cuando(t, linea["dia"], hoy)
+
+
 def _vence_ctx(t: T, conn, person_id: int, today_local: date, mcp_pendientes: dict | None,
                cobertura_pendientes: dict, ids_extra: list[int]) -> dict | None:
     """BODY-HOY-LO-QUE-VENCE-1: Hoy's own "coming due" strip, directly below the readiness hero --
@@ -723,7 +734,7 @@ def _vence_ctx(t: T, conn, person_id: int, today_local: date, mcp_pendientes: di
         mas = t("vence.mas_other", n=t.num(extra))
     else:
         mas = None
-    lineas_ctx = [{"texto": _vence_texto(t, l), "tiempo": vence.cuando(t, l["dia"], today_local),
+    lineas_ctx = [{"texto": _vence_texto(t, l), "tiempo": _vence_tiempo(t, l, today_local),
                    "href": l["href"], "vencido": l["estado"] == "vencido"} for l in mostradas]
     return {"titulo": t("vence.titulo"), "lineas": lineas_ctx, "mas": mas}
 
