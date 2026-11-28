@@ -37125,3 +37125,58 @@ Branch deleted, repository left on `main`.
 
 No password, token, session secret or health figure of a real person was read, printed, or written
 anywhere in this slice's own work.
+
+## BODY-CUERPO-SPIN-HOY-PULIDO-1 -- the 2D view selector stayed on screen under the 3D spin
+
+The orchestrator's 375 px pass of the 3D spin (BODY-CUERPO-SPIN-HOY-1 + .F) on invented demo data
+found one nit, built after the wake-arrival slice per Carlos's own request through the desk 27 Nov:
+the flat 2D figure's own view selector row -- `body/templates/_cuerpo_vista.html`'s
+`.cuerpo-vista-btns` div holding the `.cuerpo-vista-btn` Muscles/Back/Heart buttons and the
+`.cuerpo-vista-swipe` "Swipe to turn" hint -- rendered OUTSIDE both tracks, and
+`body/static/giro-interruptor.js`'s `aplicar()` toggled only `.cuerpo-vista-track` and
+`.cuerpo3d-track`. So the phone showed two "Muscles" and two "Heart" buttons at once in 3D, the 2D
+ones doing nothing visible there.
+
+**The fix, rulings 1-2.** The row keeps its own `cuerpo-vista-btns` class (layout unchanged) and
+gains one extra hook class, `cuerpo2d-btns` -- never moved inside `.cuerpo3d-track`, since
+`cuerpo-vista.js`'s own swipe handling reads `.cuerpo-vista-track` directly and moving the row would
+not have changed anything else worth the risk (named in `open_followups` below, not done).
+`giro-interruptor.js`'s `aplicar()` gained one line: `if (btns2d) btns2d.hidden = modo !== "2d"`,
+the same mode test the two tracks already use. The global `[hidden]{display:none !important}`
+rule BODY-CUERPO-SPIN-HOY-1.F added makes the attribute alone enough -- no CSS change (`body.css`'s
+own `.cuerpo-vista-btns{display:flex;...}` has no `!important` to fight it). Ruling 3 (a page with
+no spin, `cuerpo.giro` falsy, keeps the selector always shown) needed no code change: `wire()`
+already returns early when `.cuerpo3d-seg`/`.cuerpo-vista-track`/`.cuerpo3d-track` are absent, so
+`btns2d` is never read on Tendencias or Turnos.
+
+**Tests**, four new in `tests/test_giro.py` (invented data, `tests/_isolate.py` first): exactly one
+`cuerpo2d-btns` row in the template source, holding the `.cuerpo-vista-btn` buttons and the swipe
+hint, outside `.cuerpo3d-track`; a source assertion that `giro-interruptor.js`'s `aplicar()` hides
+it with the same `modo !== "2d"`/`"3d"` test as the tracks; and a `TestClient` render of Hoy's own
+card (ruling 4) confirming the row carries no `hidden` attribute in the server's 2D-default render.
+`tests/test_cuerpo_vista.py` and `tests/test_avatar3d.py` carried no assertion on the row's exact
+class string, so both stayed green unchanged, confirmed by running them.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run once on the final tree in
+28 foreground chunks (10 modules each, 5 for `test_garmin_*`, `test_guardia_parches` isolated alone
+after it ran slow under parallel contention, 4 for the `test_host_*` modules caught by the
+reconciliation below): **6079 tests, every chunk green** (no failures, no errors; the "pull attempt
+failed: ...", "dia vacio ...", "lugares: sin conectar", "mcp ... error: ...", "asistente: propuesta
+... no se pudo mostrar (KeyError)", `ResourceWarning: unclosed database` lines are pre-existing
+fixture/test-only output this slice never touched, no figure of a real person), summing exactly to
+a collect-only count of **6079** taken independently on the same tree via
+`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`.
+
+Slice commit `585be9533acf6539a82bf8584c6c526acaa47718` on `feat/body-cuerpo-spin-hoy-pulido-1`
+(branched from `main` at `964c1c6d84cd34059f2ae2209279c47caf44ca14`). Merged into `main` with
+`--no-ff` at `0433a8c9cdb6e396bcb6142fa6669d2ea32a0d12`; its tree
+(`a11a2f1671073be11bf38dda8d4bbeeb39f8c7be`) matches the slice branch's own tip tree exactly (`git
+diff` empty), so the gate run above, taken on the final tree before the merge, carries over.
+Branch deleted, repository left on `main`.
+
+No new string, no schema change, no Tier 1 path touched; the diff is a hook class plus one line of
+always-loaded switch JS, so merge policy A's three conditions all cleared and the spec's own
+approval text authorised merging on green without a further stop.
+
+No password, token, session secret or health figure of a real person was read, printed, or written
+anywhere in this slice's own work.
