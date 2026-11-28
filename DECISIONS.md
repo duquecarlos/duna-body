@@ -37242,3 +37242,56 @@ branched from `main` at `351fb2f100aa2f84209dd16dbf410ef3efb920f3`). Merged into
 at `cb3692ddb30f362f27b68fc5264efa1a8b34e659`; its tree (`3a59b7f673be68c311f38273db898621913b70f0`)
 matches the slice branch's own tip tree exactly (`git diff` empty), so the gate run above, taken on
 the final tree before the merge, carries over. Branch deleted, repository left on `main`.
+
+## BODY-HOY-LO-QUE-VENCE-PULIDO-2: the daily cobertura line's own duplicated "today", fixed and merged
+
+The orchestrator's own 375 px pass on merged `main` (`7dfe20ba082245278cd2d306b2f83cbc0817beec`) found one
+remaining nit: a DAILY missing-measure line (`vence.linea.cobertura_hoy`, "Falta registrar hoy: comidas" /
+"Still to log today: meals") already says the day in its own words, and the row still carried the strip's
+relative-time span beside it (`vence.cuando`, "hoy"/"today") -- the day named twice. A weekly cobertura
+line's words say "esta semana"/"this week", never a day, so its own relative time still carries information
+the words do not, and keeps it.
+
+**Ruling 1, as built.** A new `body/rutas/hoy._vence_tiempo(t, linea, hoy)` decides each line's own
+"tiempo" -- empty for a cobertura line whose `datos["cadencia"]` is `"daily"`, `vence.cuando(t, linea["dia"],
+hoy)` otherwise (every other line kind, and a weekly cobertura line, unchanged). The decision reads the
+line's own `cadencia`, carried in `datos` since BODY-HOY-LO-QUE-VENCE-PULIDO-1, never a comparison of
+rendered strings. `body/rutas/hoy._vence_ctx` calls it in place of the bare `vence.cuando` it called before.
+`body/templates/today.html`'s `<li>` renders the `<span class="k">` only when `l.tiempo` is non-empty, so a
+daily cobertura row leaves the element out entirely rather than rendering it blank -- the row's layout (44 px
+tap target, one-row at 375 px) is otherwise unchanged; `.taplink`'s own `min-height:44px` and `.plan
+li.vence-linea`'s flex rules already hold with one child, so neither `body/vence.py` nor `body/static/
+body.css` needed a change. No key removed, no new string: `vence.cuando.hoy` stays (other line kinds due
+today still use it).
+
+**Tests.** `tests/test_vence.py` gets a new `VenceTiempoCoberturaTest` (3 cases): a daily cobertura line's
+own `_vence_tiempo` is `""` in both languages; a weekly cobertura line keeps its relative words ("en 3
+días"/"in 3 days"); a non-cobertura line due today still shows "hoy"/"today" (ruling 3) -- the existing
+`CapTest` end-to-end case already covered this last one and is unchanged. `tests/test_plan_hoy_registro.py`'s
+`DailyOnlyTest` and `WeeklyOnlyTest` gain a `_fila()` helper (the one `<li class="vence-linea...">...</li>`
+block around a given anchor, found by regex so the assertion does not depend on the template's own
+whitespace) and assert, per language: the daily row carries no `class="k"` element and says "hoy"/"today"
+exactly once; the weekly row still carries `<span class="k">en 3 días</span>` / `<span class="k">in 3
+days</span>`. `tests/test_demo.py`'s `DemoHoyPendientesTest` gets the same no-`class="k"` assertion on the
+exact render the orchestrator's own pass found the nit on (the demo person's missing `proteina`). No test
+was weakened; the `BothPartsTest` and `SinUsoNuncaNombradoTest` cases from BODY-HOY-LO-QUE-VENCE-PULIDO-1
+needed no further change -- none of them asserted the span at all.
+
+**Gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run on the final tree in 28
+foreground chunks (10 modules each; 5 for the `test_garmin_*` modules split into two 5-module batches; 4 for
+the `test_host_*` modules, alone): every chunk green (no failures, no errors -- the same pre-existing
+fixture/test-only output as BODY-HOY-LO-QUE-VENCE-PULIDO-1's own entry describes: "pull attempt failed:
+...", "dia vacio ...", "lugares: sin conectar", "mcp ... error: ...", "asistente: propuesta ... no se pudo
+mostrar (KeyError)", `ResourceWarning: unclosed database`, and a `boom`-raising mock thread's own traceback;
+none of it touched by this slice, no figure of a real person), summing to exactly **6085** tests across all
+chunks, matching a collect-only count of **6085** taken independently on the same tree via
+`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()` -- 3 more than
+BODY-HOY-LO-QUE-VENCE-PULIDO-1's own 6082, exactly this slice's own 3 new `VenceTiempoCoberturaTest` cases.
+
+No schema change, no customer-facing byte (no string added, removed or reworded; the strip's own layout and
+copy are unchanged for every case but the one the ruling removes an already-redundant element from), no
+cross-repo contract touched. Merged on green without a further stop, per the approval reason
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`, "you may merge").
+
+No password, token, session secret or health figure of a real person was read, printed, or written anywhere
+in this slice's own work.

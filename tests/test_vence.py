@@ -249,6 +249,29 @@ class CuandoTest(unittest.TestCase):
         self.assertEqual(vence.cuando(EN, dia, HOY), "5 days ago")
 
 
+class VenceTiempoCoberturaTest(unittest.TestCase):
+    """BODY-HOY-LO-QUE-VENCE-PULIDO-2 ruling 1: a cobertura line's own `cadencia` decides whether
+    it carries a relative-time word at all -- a daily stream's words already say "hoy"/"today"
+    (vence.linea.cobertura_hoy), so the day is never said twice. A weekly cobertura line, and
+    every other line kind due today, keep `vence.cuando` exactly as before (ruling 2/3)."""
+
+    def test_daily_cobertura_line_has_no_tiempo(self):
+        linea = {"tipo": "cobertura", "dia": HOY.isoformat(), "datos": {"stream": "comidas", "cadencia": "daily"}}
+        self.assertEqual(hoy._vence_tiempo(ES, linea, HOY), "")
+        self.assertEqual(hoy._vence_tiempo(EN, linea, HOY), "")
+
+    def test_weekly_cobertura_line_keeps_its_relative_time(self):
+        dia = (HOY + timedelta(days=3)).isoformat()
+        linea = {"tipo": "cobertura", "dia": dia, "datos": {"stream": "peso", "cadencia": "weekly"}}
+        self.assertEqual(hoy._vence_tiempo(ES, linea, HOY), "en 3 días")
+        self.assertEqual(hoy._vence_tiempo(EN, linea, HOY), "in 3 days")
+
+    def test_non_cobertura_line_due_today_still_shows_hoy(self):
+        linea = {"tipo": "deadline", "dia": HOY.isoformat(), "datos": {"titulo": "ZZ"}}
+        self.assertEqual(hoy._vence_tiempo(ES, linea, HOY), "hoy")
+        self.assertEqual(hoy._vence_tiempo(EN, linea, HOY), "today")
+
+
 class OverdueMarkupTest(unittest.TestCase):
     """BODY-HOY-LO-QUE-VENCE-PULIDO-1 ruling 1/4: the overdue line's own <li> renders with the
     padded `vence-vencido` class (body.css gives it the inner left padding the mark needs), never

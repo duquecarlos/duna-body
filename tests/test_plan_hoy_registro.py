@@ -6,6 +6,7 @@ each stream's own line there instead of the old combined sentence. Invented demo
 through goals.propose/activate and db.py's own writers, the same fixture helpers
 tests/test_plan_hoy.py and tests/test_registro_cobertura.py use.
 """
+import re
 import tempfile
 import unittest
 from datetime import date
@@ -42,6 +43,14 @@ def _reset_db(tc: unittest.TestCase):
 def _get(path: str = "/", hoy_dia: date = HOY):
     with mock.patch.object(comun, "_today_local", return_value=hoy_dia):
         return client.get(path)
+
+
+def _fila(page: str, ancla_html: str) -> str | None:
+    """BODY-HOY-LO-QUE-VENCE-PULIDO-2: the one `<li class="vence-linea...">...</li>` block whose
+    anchor is `ancla_html`, so a test can check what else that row does or does not render (a
+    `<span class="k">`) without depending on the template's own whitespace."""
+    m = re.search(r'<li class="vence-linea[^"]*">.*?' + re.escape(ancla_html) + r'.*?</li>', page, re.S)
+    return m.group(0) if m else None
 
 
 def _horizonte(conn, person_id: int = 1, titulo: str = "ZZ Horizonte", start_day: str = START_DAY,
@@ -166,6 +175,12 @@ class DailyOnlyTest(unittest.TestCase):
         self.assertIn("Por vencer", page)
         self.assertIn('href="#asis-btn">Falta registrar hoy: comidas</a>', page)
         self.assertIn('href="#asis-btn">Falta registrar hoy: proteína</a>', page)
+        # BODY-HOY-LO-QUE-VENCE-PULIDO-2 ruling 1: the line's own words already say "hoy" -- no
+        # <span class="k"> beside it, and the day is named once, not twice.
+        fila = _fila(page, 'href="#asis-btn">Falta registrar hoy: comidas</a>')
+        self.assertIsNotNone(fila)
+        self.assertNotIn('class="k"', fila)
+        self.assertEqual(fila.count("hoy"), 1)
 
     def test_daily_only_lines_en(self):
         conn = _reset_db(self)
@@ -177,6 +192,10 @@ class DailyOnlyTest(unittest.TestCase):
         self.assertIn("Coming due", page)
         self.assertIn('href="#asis-btn">Still to log today: meals</a>', page)
         self.assertIn('href="#asis-btn">Still to log today: protein</a>', page)
+        fila = _fila(page, 'href="#asis-btn">Still to log today: meals</a>')
+        self.assertIsNotNone(fila)
+        self.assertNotIn('class="k"', fila)
+        self.assertEqual(fila.count("today"), 1)
 
 
 class WeeklyOnlyTest(unittest.TestCase):
@@ -187,6 +206,11 @@ class WeeklyOnlyTest(unittest.TestCase):
         conn.commit()
         page = _get().text
         self.assertIn('href="#asis-btn">Falta registrar esta semana: peso</a>', page)
+        # Ruling 1: a weekly cobertura line's words say "esta semana", not a day -- it keeps its
+        # own relative time (HOY is a Thursday, this ISO week's Sunday is 3 days ahead).
+        fila = _fila(page, 'href="#asis-btn">Falta registrar esta semana: peso</a>')
+        self.assertIsNotNone(fila)
+        self.assertIn('<span class="k">en 3 días</span>', fila)
 
     def test_weekly_only_line_en(self):
         conn = _reset_db(self)
@@ -196,6 +220,9 @@ class WeeklyOnlyTest(unittest.TestCase):
         conn.commit()
         page = _get().text
         self.assertIn('href="#asis-btn">Still to log this week: weight</a>', page)
+        fila = _fila(page, 'href="#asis-btn">Still to log this week: weight</a>')
+        self.assertIsNotNone(fila)
+        self.assertIn('<span class="k">in 3 days</span>', fila)
 
 
 class BothPartsTest(unittest.TestCase):

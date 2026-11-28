@@ -89,7 +89,7 @@
   {% for l in vence.lineas %}
     <li class="vence-linea{% if l.vencido %} vence-vencido{% endif %}">
       <a class="taplink" href="{{ l.href }}">{{ l.texto }}</a>
-      <span class="k">{{ l.tiempo }}</span>
+      {% if l.tiempo %}<span class="k">{{ l.tiempo }}</span>{% endif %}
     </li>
   {% endfor %}
   </ul>
