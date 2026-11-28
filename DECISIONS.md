@@ -37360,3 +37360,9 @@ reversible. You may merge.").
 
 No password, token, session secret or health figure of a real person was read, printed, or written anywhere
 in this slice's own work.
+
+Slice commit `d8091c0b17f41379956e75f636b51db7a4c3e294` on `feat/body-cuerpo-spin-tinte-oscuro-1` (branched
+from `main` at `6f29a96da3a42d4369855dcc456aa3c8e1db65c3`). Merged into `main` with `--no-ff` at
+`bf676a9f49206eef1dc66ad633d5f089265dc2a1`; its tree (`7a91362ea7752468ec015928f34e97af33ab1ff4`) matches
+the slice branch's own tip tree exactly (`git diff` empty), so the gate run above, taken on the final tree
+before the merge, carries over. Branch deleted, repository left on `main`.
