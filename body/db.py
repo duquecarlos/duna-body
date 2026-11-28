@@ -1877,6 +1877,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "creada_en TEXT NOT NULL, "
         "UNIQUE (person_id, day, tipo))"
     )
+    # BODY-SUENO-LLEGADA-1 ruling 1 (ORCH-CARLOS-DELEGATES-TIER-1-1, Carlos's own ruling relayed by
+    # the desk): how long it takes Body to see that a night has ended, for multiple days running,
+    # before he decides whether a bed-presence sensor is worth buying. One row per night that ever
+    # arrived -- first write wins, never UPDATEd (body/db.py's own `registrar_llegada_sueno`, INSERT
+    # OR IGNORE), so a refetch of the same night never moves its own first-seen instant. Additive,
+    # no schema_version, the same guarded-CREATE convention as despertar_correccion above.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS llegada_sueno ("
+        "person_id INTEGER NOT NULL REFERENCES person(id), "
+        "day TEXT NOT NULL, "
+        "noche_fin TEXT, "
+        "primera_llegada_en TEXT NOT NULL, "
+        "reloj_en_llegada TEXT, "
+        "via TEXT NOT NULL CHECK (via IN ('diaria', 'hoy', 'demanda', 'conectar')), "
+        "PRIMARY KEY (person_id, day))"
+    )
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
@@ -3424,6 +3440,48 @@ def borrar_despertar_correccion(conn: sqlite3.Connection, person_id: int, day: s
             "DELETE FROM despertar_correccion WHERE person_id = ? AND day = ? AND tipo = ?",
             (person_id, day, tipo),
         )
+
+
+# BODY-SUENO-LLEGADA-1 ruling 1: nothing else reads a `llegada_sueno` row this old, so a generous
+# bound kept well past the report's own 14-night default is enough -- a named constant rather than
+# a bare number, so a future caller who widens the report's own reach can see why this number is
+# what it is without re-deriving it.
+LLEGADA_RETENCION_DIAS = 400
+
+
+def registrar_llegada_sueno(conn: sqlite3.Connection, person_id: int, day: str, noche_fin: str | None,
+                             reloj_en_llegada: datetime | None, via: str) -> None:
+    """BODY-SUENO-LLEGADA-1 ruling 2: first write wins -- INSERT OR IGNORE, never UPDATEd, so a
+    refetch of the same night (an empty early fetch that a later non-empty one claims, or a plain
+    resync) never moves `primera_llegada_en`/`via` once a row for this (person_id, day) exists.
+    `reloj_en_llegada` is the watch's own last-contact instant the caller already read in THIS SAME
+    pull (`pull._registrar_reloj_si_hay`) -- this function never reads garmin_cuenta itself, and
+    None here is stored as NULL, never a stale cached value.
+
+    Also sweeps this person's own rows older than LLEGADA_RETENCION_DIAS (ruling 1): no retention
+    sweep job exists yet for a table this new and this small, so the capture write does it
+    instead, one DELETE per person per run -- in the same transaction as the write above."""
+    now = datetime.now(timezone.utc)
+    corte = (now - timedelta(days=LLEGADA_RETENCION_DIAS)).date().isoformat()
+    with conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO llegada_sueno (person_id, day, noche_fin, primera_llegada_en, "
+            "reloj_en_llegada, via) VALUES (?, ?, ?, ?, ?, ?)",
+            (person_id, day, noche_fin, now.isoformat(timespec="seconds"),
+             reloj_en_llegada.isoformat(timespec="seconds") if reloj_en_llegada is not None else None, via),
+        )
+        conn.execute("DELETE FROM llegada_sueno WHERE person_id = ? AND day < ?", (person_id, corte))
+
+
+def llegadas_sueno(conn: sqlite3.Connection, person_id: int, desde: str, hasta: str) -> list[dict]:
+    """This person's own `llegada_sueno` rows in [desde, hasta], oldest first -- the one read both
+    `leer_llegada_sueno` and `python -m body.llegada_sueno` build on, never a second query."""
+    rows = conn.execute(
+        "SELECT day, noche_fin, primera_llegada_en, reloj_en_llegada, via FROM llegada_sueno "
+        "WHERE person_id = ? AND day BETWEEN ? AND ? ORDER BY day",
+        (person_id, desde, hasta),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def save_exercise_sets(conn: sqlite3.Connection, person_id: int, source: str, source_id: str, sets) -> None:

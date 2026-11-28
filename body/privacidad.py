@@ -91,6 +91,10 @@ FULLY_HANDLED_TABLES = {
     # exported and deleted like any other of their own rows, Garmin's own sleep_session row
     # untouched either way.
     "despertar_correccion",
+    # BODY-SUENO-LLEGADA-1.W ruling 2 (ORCH-CARLOS-DELEGATES-TIER-1-1): one row per night Body
+    # ever saw -- minute gaps and a vía, never a sleep figure, treated exactly like
+    # despertar_correccion above.
+    "llegada_sueno",
     # BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: this person's own trips, re-fetched from Lugares --
     # nothing Lugares did not send, no names, no coordinates.
     "viaje_lugares",
@@ -307,6 +311,11 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
     despertar_correcciones = [dict(r) for r in conn.execute(
         "SELECT day, tipo, hora_local, modelo_version, origen, creada_en FROM despertar_correccion "
         "WHERE person_id = ? ORDER BY day", (person_id,))]
+    # BODY-SUENO-LLEGADA-1.W ruling 2: this person's own nights, beside despertar_correcciones --
+    # minute-level timestamps only, never a sleep figure.
+    llegadas_sueno = [dict(r) for r in conn.execute(
+        "SELECT day, noche_fin, primera_llegada_en, reloj_en_llegada, via FROM llegada_sueno "
+        "WHERE person_id = ? ORDER BY day", (person_id,))]
     detalle_actividades = [dict(r) for r in conn.execute(
         "SELECT activity_source, activity_source_id, kind, fetched_at, payload FROM activity_detail "
         "WHERE person_id = ? ORDER BY activity_source, activity_source_id, kind", (person_id,))]
@@ -446,6 +455,7 @@ def export_person(conn: sqlite3.Connection, person_id: int) -> dict:
         "detalle_actividades": detalle_actividades,
         "sueno": sueno,
         "despertar_correcciones": despertar_correcciones,
+        "llegadas_sueno": llegadas_sueno,
         "recuperacion_actividades": recuperacion_actividades,
         "turno_fc": turno_fc_filas,
         "sincronizaciones": sincronizaciones,
@@ -610,6 +620,7 @@ def delete_person(conn: sqlite3.Connection, person_id: int) -> None:
         conn.execute("DELETE FROM daily_metric WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM sleep_session WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM despertar_correccion WHERE person_id = ?", (person_id,))
+        conn.execute("DELETE FROM llegada_sueno WHERE person_id = ?", (person_id,))
         conn.execute("DELETE FROM raw_payload WHERE person_id = ?", (person_id,))
         # BODY-HISTORIA-VIDA-LUGARES-1 ruling 4: this person's own cached trips and sync state,
         # both re-fetched from Lugares, never hand-copied -- same census treatment as every other

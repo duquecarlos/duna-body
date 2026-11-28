@@ -211,6 +211,10 @@ def _seed_person(conn, person_id: int, tag: str) -> dict:
     # checks export/delete-all coverage, and tipo/origen are both CHECK-constrained enums.
     db.guardar_despertar_correccion(conn, person_id, DAYS[-1], "levantado",
                                      "06:45" if tag == "A" else "07:50", "despertar-real-v2", "asistente")
+    # BODY-SUENO-LLEGADA-1.W ruling 2: llegada_sueno is person-owned (its own person_id column,
+    # same census treatment as despertar_correccion above) -- no marker needed, the census only
+    # checks export/delete-all coverage.
+    db.registrar_llegada_sueno(conn, person_id, DAYS[-1], f"{DAYS[-1]}T06:00", None, "diaria")
     conn.execute(
         "INSERT INTO shift (person_id, day, kind, code, start_local, end_local, source) "
         "VALUES (?, ?, 'night', ?, ?, ?, 'manual')",

@@ -75,7 +75,8 @@ from zoneinfo import ZoneInfo
 from .. import anatomia, ayuno_entreno, baselines, captura_sueno, catalogo_tendencias, comidas, compartir, \
     contexto_dia, cuenta, db, despertar_real, desplazamiento_import, enlaces, entreno_historial, errores, \
     esfuerzo_sesion, \
-    experimentos, fechas, garmin_adapter, garmin_cuenta, goals, history, horizonte, household, noche_rasgos, \
+    experimentos, fechas, garmin_adapter, garmin_cuenta, goals, history, horizonte, household, llegada_sueno, \
+    noche_rasgos, \
     nutriente_objetivo, practicas, profile, pull, readiness, reentrada, registro_cobertura, shift_import, \
     sueno_fc, turnos_costo, tutoriales, viajes
 from .. import productos as productos_mod
@@ -383,6 +384,14 @@ _PARAM_LEER_DIAS_LIBRES = {
     "properties": {
         "desde": {"type": "string", "format": "date"},
         "dias": {"type": "integer", "minimum": _LEER_DIAS_LIBRES_MIN_DIAS, "maximum": _LEER_DIAS_LIBRES_MAX_DIAS},
+    },
+    "additionalProperties": False,
+}
+_PARAM_LEER_LLEGADA_SUENO = {
+    "type": "object",
+    "properties": {
+        "desde": {"type": "string", "format": "date"},
+        "hasta": {"type": "string", "format": "date"},
     },
     "additionalProperties": False,
 }
@@ -2129,6 +2138,49 @@ def _leer_estado_reloj(conn: sqlite3.Connection, person_id: int) -> dict:
         "dias_sin_datos_14": garmin_cuenta.dias_sin_datos(conn, person_id, hoy),
         "estado_vivo": pull.texto_estado_vivo(T(person.get("language", "es")), conn, person_id, tz, hoy),
     }
+
+
+def _leer_llegada_sueno(conn: sqlite3.Connection, person_id: int, desde: str | None = None,
+                         hasta: str | None = None) -> dict:
+    """BODY-SUENO-LLEGADA-1 ruling 5 (ORCH-CARLOS-DELEGATES-TIER-1-1): per night, when the watch
+    last reached Garmin's own cloud and when Body first stored it, and whether it was a work day
+    or a day off -- never a time of day, never a health figure, so nivel 'ninguno' (the same
+    reasoning `leer_estado_reloj` already rests on). `desde`/`hasta` the same bounded-range
+    convention `_buscar_noches` uses: `hasta` defaults to today in the person's own zone and can
+    never be future; `desde` defaults to `llegada_sueno.DIAS_DEFECTO` nights back from `hasta`.
+    'resumen' is the SAME minutes-and-counts `llegada_sueno.resumen_de_filas` the CLI report
+    prints, built from the SAME rows 'noches' lists, never a second query or a second
+    arithmetic."""
+    person = db.person(conn, person_id)
+    hoy = fechas.hoy_local(person)
+    if hasta is not None:
+        try:
+            hasta_d = date.fromisoformat(hasta)
+        except ValueError:
+            raise ToolError("'hasta' debe ser una fecha ISO (AAAA-MM-DD)")
+        if hasta_d > hoy:
+            raise ToolError("'hasta' no puede ser una fecha futura")
+    else:
+        hasta_d = hoy
+        hasta = hasta_d.isoformat()
+    if desde is not None:
+        try:
+            desde_d = date.fromisoformat(desde)
+        except ValueError:
+            raise ToolError("'desde' debe ser una fecha ISO (AAAA-MM-DD)")
+        if desde_d > hasta_d:
+            raise ToolError("'desde' no puede ser posterior a 'hasta'")
+    else:
+        desde = (hasta_d - timedelta(days=llegada_sueno.DIAS_DEFECTO - 1)).isoformat()
+
+    filas = db.llegadas_sueno(conn, person_id, desde, hasta)
+    noches = [
+        {"dia": f["day"], "noche_fin": f["noche_fin"], "primera_llegada_en": f["primera_llegada_en"],
+         "via": f["via"], "reloj_en_llegada": f["reloj_en_llegada"],
+         "jornada": llegada_sueno._jornada(conn, person_id, f["day"])}
+        for f in filas
+    ]
+    return {"noches": noches, "resumen": llegada_sueno.resumen_de_filas(conn, person_id, filas)}
 
 
 def _hoy_local(conn: sqlite3.Connection, person_id: int) -> str:
@@ -4568,6 +4620,11 @@ HERRAMIENTAS = [
                      "hay uno, el día más reciente con datos del reloj, y qué días de los últimos 14 no "
                      "tienen datos. Nunca una cifra de salud: solo el estado de la sincronización.",
      "parametros": _SIN_PARAMETROS, "funcion": _leer_estado_reloj},
+    {"nombre": "leer_llegada_sueno", "tipo": "lectura", "nivel": "ninguno",
+     "descripcion": "Por cada noche: cuándo terminó según el reloj, cuándo la recibió Body por primera vez "
+                     "y por qué vía, y si era día de trabajo o libre. Solo horas y minutos, nunca cifras de "
+                     "sueño.",
+     "parametros": _PARAM_LEER_LLEGADA_SUENO, "funcion": _leer_llegada_sueno},
     {"nombre": "leer_tutoriales", "tipo": "lectura", "nivel": "ninguno",
      "descripcion": "Los tutoriales del catálogo de Body: su capítulo, su pantalla, si el asistente ya lo hace "
                      "y si ya existe un video. Úsala para responder cómo se hace algo en la app.",
