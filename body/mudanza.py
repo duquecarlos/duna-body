@@ -155,6 +155,9 @@ REGISTRY: tuple[TableSpec, ...] = (
     # row (UNIQUE(person_id, day, tipo)), so `tipo` joins the natural key alongside sleep_session's
     # own (person_id, day) shape above.
     TableSpec("despertar_correccion", match_cols=("person_id", "day", "tipo")),
+    # BODY-SUENO-LLEGADA-1.W ruling 2: one row per (person_id, day), the table's own PRIMARY KEY --
+    # no `tipo` to widen the key with, unlike despertar_correccion above.
+    TableSpec("llegada_sueno", match_cols=("person_id", "day")),
     TableSpec("raw_payload", match_cols=("person_id", "day", "kind", "source")),
     TableSpec("activity", match_cols=("person_id", "source", "source_id")),
     TableSpec("workout_set",

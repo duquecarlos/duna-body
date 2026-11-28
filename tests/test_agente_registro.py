@@ -118,6 +118,7 @@ def _all_tool_calls():
         "leer_plan": gid_placeholder, "leer_planes": {}, "leer_practicas": {},
         "leer_altitudes": {}, "leer_pendientes_registro": {},
         "buscar_productos": {"texto": "pollo"},
+        "leer_llegada_sueno": {},
     }
 
 
@@ -233,9 +234,13 @@ class RegistryShapeTest(unittest.TestCase):
             # BODY-COMIDA-PRODUCTO-1 ruling 3: extended from twenty-five -- buscar_productos is the
             # one new entry, at nivel 'ninguno' (a product's name/brand carries no health figure).
             "buscar_productos": "ninguno",
+            # BODY-SUENO-LLEGADA-1.W ruling 3: extended from twenty-six -- leer_llegada_sueno is
+            # the one new entry, also at nivel 'ninguno' (minute gaps and a vía, never a sleep
+            # figure).
+            "leer_llegada_sueno": "ninguno",
         }
         lectura = [h for h in herramientas.HERRAMIENTAS if h["tipo"] == "lectura"]
-        self.assertEqual(len(lectura), 26)
+        self.assertEqual(len(lectura), 27)
         self.assertEqual({h["nombre"]: h["nivel"] for h in lectura}, expected_levels)
 
     def test_thirty_propuesta_tools_with_one_at_nivel_resumen(self):
@@ -284,7 +289,8 @@ class RegistryShapeTest(unittest.TestCase):
         # BODY-REGISTRO-COBERTURA-1: extended from 59 -- leer_pendientes_registro is the one new entry.
         # BODY-COMIDA-PRODUCTO-1: extended from 60 -- buscar_productos is the one new entry.
         # BODY-COMIDA-PRODUCTO-1-B ruling B: extended from 61 -- crear_producto is the one new entry.
-        self.assertEqual(len(herramientas.HERRAMIENTAS), 62)
+        # BODY-SUENO-LLEGADA-1.W ruling 3: extended from 62 -- leer_llegada_sueno is the one new entry.
+        self.assertEqual(len(herramientas.HERRAMIENTAS), 63)
 
     def test_every_entry_carries_the_reserved_plan_field_unset(self):
         # BODY-ASISTENTE-CONFORMIDAD-1 ruling 2 (agent-capabilities-v1 section 5): the field

@@ -19,7 +19,7 @@ from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from tests._db import open_conn
 
-from body import config, cuenta, db, fechas, garmin_adapter, garmin_cuenta, llegada_sueno, pull
+from body import config, cuenta, db, fechas, garmin_adapter, garmin_cuenta, llegada_sueno, mudanza, pull, privacidad
 from body.agente import herramientas
 
 TOKEN_KEY_HEX = "ab" * 32
@@ -387,6 +387,93 @@ class LeerLlegadaSuenoToolTest(unittest.TestCase):
         with self.assertRaises(herramientas.ToolError):
             herramientas.ejecutar(self.conn, self.person_id, "leer_llegada_sueno",
                                    {"hasta": futuro}, "ninguno")
+
+
+# --------------------------------------------- BODY-SUENO-LLEGADA-1.W ruling 2: export/delete-all
+
+class ExportDeleteTest(unittest.TestCase):
+    """llegada_sueno joins FULLY_HANDLED_TABLES, treated exactly like despertar_correccion: fully
+    exported under its own key, fully deleted with the rest of delete-all. Invented demo data
+    only."""
+
+    def setUp(self):
+        orig_db_path = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", orig_db_path))
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "export.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        self.conn.execute("INSERT INTO person (id, display_name) VALUES (2, 'Otra')")
+        self.conn.commit()
+        db.registrar_llegada_sueno(self.conn, 1, "2026-11-20", "2026-11-20T06:30",
+                                    datetime(2026, 11, 20, 11, 45, tzinfo=timezone.utc), "diaria")
+        db.registrar_llegada_sueno(self.conn, 2, "2026-11-21", "2026-11-21T06:30",
+                                    datetime(2026, 11, 21, 11, 45, tzinfo=timezone.utc), "hoy")
+        self.conn.commit()
+
+    def test_llegada_sueno_is_a_fully_handled_table(self):
+        self.assertIn("llegada_sueno", privacidad.FULLY_HANDLED_TABLES)
+
+    def test_export_carries_only_this_persons_rows(self):
+        data = privacidad.export_person(self.conn, 1)
+        self.assertEqual(len(data["llegadas_sueno"]), 1)
+        fila = data["llegadas_sueno"][0]
+        self.assertEqual(
+            set(fila), {"day", "noche_fin", "primera_llegada_en", "reloj_en_llegada", "via"})
+        self.assertEqual(fila["day"], "2026-11-20")
+        self.assertEqual(fila["via"], "diaria")
+
+        data_otra = privacidad.export_person(self.conn, 2)
+        self.assertEqual(len(data_otra["llegadas_sueno"]), 1)
+        self.assertEqual(data_otra["llegadas_sueno"][0]["day"], "2026-11-21")
+
+    def test_delete_all_removes_only_this_persons_rows(self):
+        privacidad.delete_person(self.conn, 1)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM llegada_sueno WHERE person_id = 1").fetchone()[0], 0)
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM llegada_sueno WHERE person_id = 2").fetchone()[0], 1)
+
+
+# ------------------------------------------------- BODY-SUENO-LLEGADA-1.W ruling 2: a host move
+
+class MudanzaRoundTripTest(unittest.TestCase):
+    """llegada_sueno joins the mudanza registry beside despertar_correccion
+    (TableSpec(match_cols=("person_id", "day"))) -- one row migrates from a PC install to its
+    hosted destination, invented demo data only."""
+
+    CUENTA_SUB = "sub-llegada-sueno-mudanza-test"
+
+    def setUp(self):
+        self._orig_home, self._orig_db = config.BODY_HOME, config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "BODY_HOME", self._orig_home))
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self._orig_db))
+        self.tmp = Path(tempfile.mkdtemp(dir=TMP, prefix="llegada-mudanza-"))
+        config.BODY_HOME = self.tmp
+        config.DB_PATH = self.tmp / "host.db"
+        self.source_path = self.tmp / "pc.db"
+
+    def test_a_row_migrates_to_its_hosted_destination(self):
+        source = db.connect(path=self.source_path)
+        db.init(source)
+        source_person_id = db.default_person_id()
+        db.registrar_llegada_sueno(source, source_person_id, "2026-11-20", "2026-11-20T06:30",
+                                    datetime(2026, 11, 20, 11, 45, tzinfo=timezone.utc), "diaria")
+        source.commit()
+        source.close()
+
+        reports, ok = mudanza.importar(self.source_path, self.CUENTA_SUB, apply=True)
+        self.assertTrue(ok)
+        by_name = {r.name: r for r in reports}
+        self.assertEqual(by_name["llegada_sueno"].counts.insert, 1)
+
+        dest = db.connect()
+        self.addCleanup(dest.close)
+        dest_person_id = dest.execute(
+            "SELECT id FROM person WHERE cuenta_sub = ?", (self.CUENTA_SUB,)).fetchone()[0]
+        filas = db.llegadas_sueno(dest, dest_person_id, "2026-11-01", "2026-11-30")
+        self.assertEqual(len(filas), 1)
+        self.assertEqual(filas[0]["via"], "diaria")
 
 
 if __name__ == "__main__":
