@@ -34,9 +34,6 @@
      cap (below) still left it filling the first screen there. One value, named once, never three
      literals repeated at each of its two call sites (`.hoy-figura-compacta`'s track/3d-track rules). */
   --hoy-figura-compacta-max:min(46svh,420px);
-  /* BODY-AVATAR-3D-VISOR-1 ruling 6: the 3D viewer's own hatch (the "limited" look) and organ
-     tint -- the mock's own two tokens, read with getComputedStyle, never hardcoded in the JS. */
-  --cuerpo3d-raya:#8F8C86; --cuerpo3d-organo:#D98E98;
   color-scheme: light;
 }
 :root[data-theme="dark"]{
@@ -44,7 +41,6 @@
   --ink:#F2F1EC; --ink2:#C9C6BF; --muted:#A09D95; --amber-deep:#E0A33A; --amber-tint:#3A2E17;
   --night-tint:#26313C; --day-tint:#3A2E17; --ok:#7DB282; --body:#7DB282; --danger:#E07A5F; --est:#D9B26A;
   --viaje:#B79CE8;
-  --cuerpo3d-raya:#9A978F; --cuerpo3d-organo:#C9808B;
   --focus:#9DB7CF; color-scheme: dark;
 }
 *{box-sizing:border-box}
@@ -544,24 +540,54 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
   border: 1.5px dashed var(--body);
 }
 .cuerpo-vista-btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
-.cuerpo-vista-btn{min-height:44px;padding:0 14px;border-radius:18px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 13px inherit;cursor:pointer}
-.cuerpo-vista-btn.on{border:2px solid var(--body);background:color-mix(in srgb,var(--body) 14%,transparent);font-weight:600}
-@media (hover:hover){.cuerpo-vista-btn:not(.on):hover{background:var(--wash)}}
+.cuerpo-vista-btn,.giro-vista-btn{min-height:44px;padding:0 14px;border-radius:18px;border:1px solid var(--line);background:transparent;color:var(--ink);font:500 13px inherit;cursor:pointer}
+.cuerpo-vista-btn.on,.giro-vista-btn.on{border:2px solid var(--body);background:color-mix(in srgb,var(--body) 14%,transparent);font-weight:600}
+@media (hover:hover){.cuerpo-vista-btn:not(.on):hover,.giro-vista-btn:not(.on):hover{background:var(--wash)}}
 .cuerpo-vista-swipe{margin-left:auto;font-size:12px;color:var(--muted)}
 .cuerpo-caption{color:var(--muted);font-size:13px;line-height:1.45;margin:10px 0 0}
 
-/* BODY-AVATAR-3D-VISOR-1 ruling 3: the 2D/3D switch -- hidden by default (visor.js only reveals
-   it once it has feature-detected WebGL2), same pill shape as `.cuerpo-vista-btn` so it reads as
-   part of the same card. ruling 5: `.cuerpo3d-track` gets its own class (never literally
-   `cuerpo-vista-track`, which tests/test_hoy_escritorio.py counts by name on the page) but shares
-   its box (aspect ratio, background, the `.hoy-figura` height cap) through the selector list
-   above and below -- only the canvas inside it is new. */
+/* BODY-CUERPO-SPIN-HOY-1: the 2D/switch -- same pill shape as `.cuerpo-vista-btn` so it reads as
+   part of the same card. `.cuerpo3d-track` keeps its own name from the viewer this replaces
+   (tests/test_hoy_escritorio.py counts it by name on the page) and still shares its box (aspect
+   ratio, background, the `.hoy-figura` height cap) through the selector list above and below --
+   only what is inside it is new (the image spin's own layered scene, giro-*, further down). */
 .cuerpo3d-seg{display:inline-flex;background:var(--inset);border-radius:999px;padding:3px;margin-bottom:10px}
-.cuerpo3d-btn{all:unset;cursor:pointer;min-height:38px;min-width:44px;padding:0 14px;border-radius:999px;font:500 13px inherit;color:var(--ink2);display:inline-flex;align-items:center;justify-content:center}
+.cuerpo3d-btn{all:unset;cursor:pointer;min-height:44px;min-width:44px;padding:0 14px;border-radius:999px;font:500 13px inherit;color:var(--ink2);display:inline-flex;align-items:center;justify-content:center}
 .cuerpo3d-btn.on{background:var(--card);color:var(--ink);font-weight:600}
 .cuerpo3d-btn:focus-visible{outline:2px solid var(--focus)}
-.cuerpo3d-lienzo{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:pan-y}
-.cuerpo3d-pista{position:absolute;left:10px;bottom:8px;font-size:12px;color:var(--muted);pointer-events:none}
+
+/* The spin's own layered scene (two frames for the crossfade, the tint canvas, the pulsing-plan
+   canvas) -- every layer fills `.cuerpo3d-track` the same way, `object-fit:contain` so a shorter
+   canvas still lines up with the frame under it. */
+.giro-escena{all:unset;display:block;position:relative;width:100%;height:100%;touch-action:pan-y;cursor:grab}
+.giro-escena.arrastrando{cursor:grabbing}
+.giro-escena img,.giro-escena canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
+.giro-escena img.b{opacity:0}
+.giro-tinte{mix-blend-mode:multiply;transition:opacity .18s}
+:root[data-theme="dark"] .giro-tinte{mix-blend-mode:screen}
+.giro-meta{opacity:0}
+.giro-escena.con-meta .giro-meta{animation:giro-latido 1.6s ease-in-out infinite}
+@keyframes giro-latido{0%,100%{opacity:.25}50%{opacity:.85}}
+@media (prefers-reduced-motion:reduce){
+  .giro-escena.con-meta .giro-meta{animation:none;opacity:.7}
+  .giro-tinte{transition:none}
+}
+.giro-pista{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:12px;color:var(--muted);pointer-events:none}
+.giro-cargando{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:14px;background:var(--wash)}
+
+/* Six layer buttons never fit one row at 375px -- a 3x2 grid, full width, same reason
+   `.seg.capas` in the mock is a grid instead of `.cuerpo3d-seg`'s own pill row. */
+.giro-capas{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;background:var(--inset);border-radius:16px;padding:3px;margin-bottom:10px}
+.giro-capas button{all:unset;cursor:pointer;min-height:44px;padding:0 4px;border-radius:13px;font:500 12px inherit;color:var(--ink2);display:flex;align-items:center;justify-content:center;text-align:center}
+.giro-capas button.on{background:var(--card);color:var(--ink);font-weight:600}
+.giro-capas button:focus-visible{outline:2px solid var(--focus)}
+.giro-esfera{display:flex;gap:6px;justify-content:center;align-items:center;min-height:20px;margin-top:8px}
+.giro-esfera i{width:8px;height:8px;border-radius:50%;background:var(--soft);display:block}
+.giro-esfera i.on{background:var(--body)}
+.giro-angulo{font-size:13px;color:var(--muted);text-align:center;min-height:18px}
+.giro-leyenda{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:13px;color:var(--ink2);margin-top:8px}
+.giro-leyenda span{display:inline-flex;align-items:center;gap:6px}
+.giro-leyenda i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid var(--line)}
 
 /* ---------- Hoy's own top block (BODY-HOY-ESCRITORIO-1 rulings 1-2): phone keeps plain DOM order
    (score hero, "El día por delante", THEN the figure -- Carlos's own words: the figure filling the

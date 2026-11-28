@@ -234,36 +234,6 @@ def objetivo_regiones(categorias_planeadas) -> list[str] | None:
     return out or None
 
 
-def etiquetas_regiones(t: T) -> dict[str, str]:
-    """BODY-AVATAR-3D-VISOR-1 ruling 5: the 3D viewer's own tap line names a region with the SAME
-    `cuerpo.grupo.<clave>` keys the 2D caption already reads for every muscle (anatomia.GRUPOS_ORDEN).
-    corazon and cerebro carry no 2D caption use (VISTA_GRUPOS never lets a training category light
-    them), so they get their own two `cuerpo.grupo.*` entries here -- same prefix, same lookup,
-    nothing view-specific."""
-    return {region["clave"]: t("cuerpo.grupo." + region["clave"]) for region in REGIONES}
-
-
-def etiquetas_estado3d(t: T) -> dict[str, str]:
-    """BODY-AVATAR-3D-VISOR-1 ruling 5: the viewer's own four tap-state words, one literal t() call
-    each -- the same reason _alt() above gives (tests/test_i18n_paridad.py's dynamic-prefix guard
-    needs each full key typed out, not built from a runtime state string). `sin_registro` is the
-    one state `regiones_estado()` never assigns itself (a region absent from its own dict), read
-    here so the viewer can still say something honest about an untouched region.
-    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 7: the five extra words body.musculo.compute's own states
-    need, same literal-call reason, plain and never medical."""
-    return {
-        "entrenado": t("cuerpo.estado3d.entrenado"),
-        "pendiente": t("cuerpo.estado3d.pendiente"),
-        "limitada": t("cuerpo.estado3d.limitada"),
-        "sin_registro": t("cuerpo.estado3d.sin_registro"),
-        "sin_datos": t("cuerpo.estado3d.sin_datos"),
-        "subentrenado": t("cuerpo.estado3d.subentrenado"),
-        "en_rango": t("cuerpo.estado3d.en_rango"),
-        "sobrecargado": t("cuerpo.estado3d.sobrecargado"),
-        "recuperando": t("cuerpo.estado3d.recuperando"),
-    }
-
-
 def texto_liviano_a_proposito(t: T, zonas) -> str | None:
     """BODY-LESION-ZONA-1 ruling 2: the one shared plain line every training read shows for a set
     (or session) whose categoria falls inside an open lesion period's own zonas -- so leer_entreno,

@@ -15,7 +15,7 @@ from fastapi.responses import RedirectResponse
 from markupsafe import Markup
 
 from .. import (anatomia, captura_sueno, comida_compartida, compartir, cuenta, db, despertar_real, fechas, fuentes,
-                garmin_cuenta, goals, history, horizonte, household, identity, musculo, noche_inusual,
+                garmin_cuenta, giro, goals, history, horizonte, household, identity, musculo, noche_inusual,
                 nutriente_objetivo, pull, readiness, recuperacion, reentrada, registro_cobertura, turnos_costo,
                 tutoriales, ventana_comida, vence, viajes)
 from ..agente import conversacion as agente_conversacion
@@ -50,11 +50,10 @@ SUENO_RESP_KEYS = ("sleep_spo2_avg", "sleep_respiration_avg", "sleep_respiration
 # BODY-SUENO-FC-1: the sleep-window heart rate, out of the generic grid and into its own line
 # inside the sleep card, same reasoning SUENO_RESP_KEYS above already carries.
 SUENO_FC_KEYS = ("sleep_hr_avg", "sleep_hr_min")
-# BODY-AVATAR-3D-OCULTAR-1: Carlos, relayed verbatim from the Personal desk, rejected the 3D
-# viewer's stand-in figure ("what the fuck is this 3D avatar? It's a chain. It doesn't look
-# anything like the 2D images.") -- the switch is hidden again until the real anatomy mesh
-# replaces figura-v0.json and its renders pass review next to the 2D illustrations.
-CUERPO3D_VISIBLE = False
+# BODY-CUERPO-SPIN-HOY-1: Carlos approved the image spin built from his own painting ("I really
+# like this design of the 3D avatar ... This is what I want"), replacing BODY-AVATAR-3D-OCULTAR-1's
+# hidden three.js stand-in -- one flag still hides the whole switch if a later problem needs it.
+CUERPO_GIRO_VISIBLE = True
 # Each stage's fixed palette class (body/static/body.css), never a var(...) string in markup (BODY-ESTILOS-1).
 STAGES = [("sleep_deep_min", "metric.sleep_deep_min", "c-night"),
           ("sleep_light_min", "metric.sleep_light_min", "c-night-light"),
@@ -792,28 +791,28 @@ def _cuerpo_hoy_ctx(t: T, conn, person_id: int, today_local: date) -> dict:
     vistas = anatomia.contexto(t, "hoy", grupos, grupos_limitados, pendientes, estados_modelo=estados_modelo)
     return {"vistas": vistas, "caption": caption, "caption_limitada": caption_limitada,
             "recorte": "completo",
-            "cuerpo3d": _cuerpo3d_ctx(t, vistas, categorias_planeadas) if CUERPO3D_VISIBLE else None}
+            "giro": _giro_ctx(t, estados_modelo, categorias_planeadas) if CUERPO_GIRO_VISIBLE else None}
 
 
-def _cuerpo3d_ctx(t: T, vistas: list[dict], categorias_planeadas: list | None) -> dict:
-    """BODY-AVATAR-3D-VISOR-1 ruling 5: Hoy's own small JSON blob for the optional 3D viewer's tap
-    line -- REGIONES-1's own `regiones` state map (the same dict every view in `vistas` already
-    carries, read once here rather than a second anatomia call), each region's display name and
-    the viewer's four state words. Hoy-only: Tendencias and Turnos build their own `contexto()`
-    call directly, never through this function, so neither carries this key and the macro's own
-    `{% if cuerpo.cuerpo3d %}` gate stays true on Hoy alone. This blob is the only 3D-related
-    weight every Hoy visit pays (ruling 3) -- the viewer script, the figure and its images are a
-    separate fetch the template only triggers once 3D is actually chosen.
-    BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2: `objetivo` is a SECOND, separate layer -- today's
-    planned categorias (the same `categorias_planeadas` `_cuerpo_hoy_ctx` already read, never a
-    second database read), mapped to region keys by `anatomia.objetivo_regiones`. It never
-    overwrites `regiones` (the model's state) and `regiones` never overwrites it -- state says how
-    a muscle is doing, objetivo says which muscles today's session targets, and a muscle can be
-    both at once (recovering, say, and still planned). Drawing `objetivo` as an outline on the 3D
-    figure is the spin-on-Hoy slice's job, not this one's: this blob only carries the data."""
-    return {"regiones": vistas[0]["regiones"], "nombres": anatomia.etiquetas_regiones(t),
-            "estados_texto": anatomia.etiquetas_estado3d(t),
-            "objetivo": anatomia.objetivo_regiones(categorias_planeadas)}
+def _giro_ctx(t: T, estados_modelo: dict[str, str], categorias_planeadas: list | None) -> dict:
+    """BODY-CUERPO-SPIN-HOY-1: Hoy's own small JSON blobs for the image spin -- built entirely from
+    data `_cuerpo_hoy_ctx` already computed (`estados_modelo`, the SAME dict musculo.compute filled
+    once above, never a second call; `categorias_planeadas`, the caller's own plan read) and from
+    body/giro.py's own fixed data, so this costs zero extra statements (ruling 8). Hoy-only, same
+    reason the removed 3D viewer's blob was: Tendencias and Turnos build their own `contexto()`
+    call directly and never carry this key.
+    `objetivo` is the SAME separate target layer BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2 already
+    gives the (now removed) 3D viewer -- today's planned categorias, mapped to region keys,
+    independent of each region's own state (ruling 6: drawn as the spin's pulsing outline)."""
+    rutas_capas = {c: [comun.static_url(f"giro/{giro.nombre_cuadro(c, i)}") for i in range(giro.N_VISTAS)]
+                   for c in giro.CAPAS}
+    rutas_mascaras = [comun.static_url(f"giro/{giro.nombre_mascara(i)}") for i in range(giro.N_VISTAS)]
+    return {"capas_ids": list(giro.CAPAS), "capas_label": giro.etiquetas_capas(t),
+            "estados": giro.construir_estados(estados_modelo), "colores": giro.COLORES,
+            "nombres": giro.etiquetas_regiones(t), "estados_texto": giro.etiquetas_estado(t),
+            "objetivo": anatomia.objetivo_regiones(categorias_planeadas),
+            "vistas_texto": giro.vistas_texto(t),
+            "rutas_capas": rutas_capas, "rutas_mascaras": rutas_mascaras}
 
 
 def _hoy_turno_ctx(t: T, turno: dict) -> dict:
