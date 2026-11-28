@@ -36951,3 +36951,86 @@ written anywhere in this slice's own work.
 measure them. `BODY-CUERPO-ESTADO-OTRAS-CAPAS-1` -- only the muscle layer is tinted by real state
 today; the skeleton/heart/lungs/nerves/skin layers render plain, as ruling 5 approved, with no
 real-state model yet behind the other five.
+
+## BODY-CUERPO-SPIN-HOY-1.F -- the merged spin fixed before deploy: a global `[hidden]` rule, muscle-only elements that actually hide, and an aria-valuetext that names every angle
+
+BODY-CUERPO-SPIN-HOY-1 merged at `a61bd44` but was never deployed: the orchestrator's own 375px
+pass in a real browser found the 3D spin unusable. Root cause, found by this slice: the browser's
+own `[hidden]{display:none}` rule lives in the UA stylesheet, the lowest-priority origin there is
+-- any author rule of equal or higher specificity beats it regardless of source order. body.css's
+own `.giro-cargando{display:grid}` (the "Loading the views…" overlay) and `.giro-leyenda{display:
+flex}` (the layer legend) both did, so setting `hidden` on either element, as giro.js already did,
+never actually hid it. Fixed once, for the whole app, not just these two classes: a new rule near
+the top of `body.css`, `[hidden]{display:none !important}`, with a one-line comment saying why.
+The existing per-class `[hidden]{display:none}` rules (`.chart-marker`, `.asis-dot`, `.asis-panel`,
+`.asis-resize`, `.asis-status`, `.asis-propuesta-resultado`) are now redundant, not wrong -- left
+alone, this slice's job was the root cause, not their cleanup.
+
+**Every template and script that sets or toggles `hidden`, grepped and checked against rule 1's
+own condition (does anything rely on a hidden element staying displayed?) -- none does:**
+`body/static/giro.js` (`cargando.hidden`, now also `leyenda.hidden`/`objetivoCaption.hidden`/
+`detalle.hidden`, all below), `body/static/giro-interruptor.js` (`track2d.hidden`/`track3d.hidden`,
+switching the 2D/3D track -- `.cuerpo-vista-track`/`.cuerpo3d-track` carry no other `display` rule,
+so the browser default applies once `hidden` clears), `body/static/charts.js` (`marker.hidden`,
+already backed by its own `.chart-marker[hidden]{display:none}`), `body/static/assistant.js`
+(`dotEl`/`sizeBtn`/`resizeEl`/`panelEl`/`resultado`/`turno.status`, every one already backed by its
+own `[hidden]{display:none}` rule in `body.css`, so this slice's global rule changes nothing about
+their behaviour), and every `hidden` attribute in `body/templates/base.html`
+(`.asis-dot`/`.asis-panel`/`.asis-resize`/`#asis-size`, same existing per-class rules).
+`body/static/etiqueta_foto.js` toggles a `.hidden` *class*, not the attribute -- untouched by this
+rule. No site relies on a hidden element staying visible.
+
+**The legend and two other muscle-only elements now hide off the muscle layer.** `giro.js`'s
+`pintar(k)` already computed `tintar` (the muscle layer's own on/off flag, driving the tint
+canvas's opacity); it now also sets `leyenda.hidden`, a new `objetivoCaption.hidden` (the "Plan de
+hoy" / "Today's plan" line, `giro-objetivo-caption`, a new class on the same `<p>`
+`_cuerpo_vista.html` already rendered -- the plan-outline caption named by ruling 2) and
+`detalle.hidden` (`.cuerpo3d-detalle`, "Toca un músculo..." / "Tap a muscle...", muscle-only by its
+own wording, and `tocar()` already no-ops on any other layer) to `!tintar`, before the function's
+early return on a non-muscle layer. All three now hide on Skeleton/Heart/Lungs/Nerves/Skin and show
+again on Muscles, through the `hidden` attribute alone -- rule 1 makes that sufficient.
+
+**The slider names every angle.** `escena`'s `aria-valuetext` used to read one of the three view
+words (`cuerpo.giro.vista.frente/lado/espalda`) at every position, including the 12 non-cardinal
+frames stepped to by drag or arrow key -- a screen reader heard "Front" at 22.5 and 45 degrees
+alike. A new literal key, `cuerpo.giro.vista.angulo` -- es `"{vista}, girado {grados}°"`, en
+`"{vista}, turned {grados}°"` -- is read via `t('cuerpo.giro.vista.angulo')` directly in
+`_cuerpo_vista.html` (no kwargs, so `T.__call__` hands back the raw, unformatted string, same as
+every other `t()` call already feeding `giro.js`'s own data blobs) into a new
+`cuerpo3d-angulo-texto` JSON script tag. `mostrar()` now computes `grados` once
+(`Math.round(cerca * PASO)`, the same number `aria-valuenow` already carried) and sets
+`aria-valuetext` to the plain view name when `cerca % 4 === 0` (the four named frames, 0/4/8/12 =
+0/90/180/270 degrees) or to the template with `{vista}`/`{grados}` replaced otherwise. The visible
+`.giro-angulo` caption under the figure is unchanged (still the plain nearest-view word) -- the
+ruling named `aria-valuetext` only.
+
+**Tests.** `tests/test_giro.py` (+7, now 27): `body.css` carries the exact global `[hidden]` rule;
+no spin element (`giro-cargando`, `giro-leyenda`, `giro-objetivo-caption`, `cuerpo3d-detalle`,
+`cuerpo3d-track`) carries an inline `style=` attribute in the template; `giro.js` toggles
+`.hidden`, never `.style.display`, for `cargando`/`leyenda`/`objetivoCaption`/`detalle`; the new
+key exists in both `es.json` and `en.json` with both `{vista}`/`{grados}` placeholders, is passed
+literally in the template, and `giro.js` reads `cuerpo3d-angulo-texto` and both `.replace(...)`
+calls. `tests/test_i18n_paridad.py` and `tests/test_registro_tu.py` needed no edit -- the new key
+reaches both guards automatically through the template's own literal `t(...)` scan.
+
+**Customer bytes.** Approved by the approval reason's own ruling 3 (the exact es/en strings above).
+Reversible, no schema, no Tier 1 path -- a CSS root-cause fix and an accessibility label on a
+feature already merged but not yet deployed.
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, the whole suite, run in 30
+foreground chunks (3 already-green chunks reused their own measured result: `test_giro` alone,
+`test_i18n_paridad`+`test_registro_tu`, `test_guardia_parches`+`test_rendimiento` -- the tree did
+not change under them before the merge): 27, 18, 38, 70, 176, 181, 227, 195, 206, 320, 224, 153,
+241, 234, 160, 193, 315, 232, 273, 249, 280, 245, 274, 300, 203, 162, 224, 295, 202, 129. **6046
+tests, every chunk green** (no failures, no errors; the many "pull attempt failed: ...", "dia
+vacio ...", "lugares: sin conectar", "asistente: propuesta ... no se pudo mostrar (KeyError)" and
+similar lines are deliberate fixture output from tests this slice never touched, no figure of a
+real person), summing exactly to a collect-only count of **6046** taken independently on the same
+final tree via `unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()` --
+exactly `6039 + 7`, the 7 tests this slice added, confirming no other drift since the merged-but-
+undeployed surface's own `6039`. Merge commit `989292f4776570484f0852a517f827b4d25ebcf1`; its tree
+(`8ac8b3a344bb7699ea0fcb66ae6ee5bce0deff60`) matches the slice branch's own tip tree exactly
+(`git diff` empty), so this gate run, taken on the branch tip before the merge, carries over.
+
+No password, token, session secret or health figure of a real person was read, printed, or
+written anywhere in this slice's own work.
