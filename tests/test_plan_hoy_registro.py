@@ -164,8 +164,8 @@ class DailyOnlyTest(unittest.TestCase):
         conn.commit()
         page = _get().text
         self.assertIn("Por vencer", page)
-        self.assertIn('href="#asis-btn">Falta registrar comidas esta semana</a>', page)
-        self.assertIn('href="#asis-btn">Falta registrar proteína esta semana</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar hoy: comidas</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar hoy: proteína</a>', page)
 
     def test_daily_only_lines_en(self):
         conn = _reset_db(self)
@@ -175,8 +175,8 @@ class DailyOnlyTest(unittest.TestCase):
         conn.commit()
         page = _get().text
         self.assertIn("Coming due", page)
-        self.assertIn('href="#asis-btn">meals not logged yet this week</a>', page)
-        self.assertIn('href="#asis-btn">protein not logged yet this week</a>', page)
+        self.assertIn('href="#asis-btn">Still to log today: meals</a>', page)
+        self.assertIn('href="#asis-btn">Still to log today: protein</a>', page)
 
 
 class WeeklyOnlyTest(unittest.TestCase):
@@ -186,7 +186,7 @@ class WeeklyOnlyTest(unittest.TestCase):
         _preparar_streams(conn, 1, HOY, faltan={"peso"})
         conn.commit()
         page = _get().text
-        self.assertIn('href="#asis-btn">Falta registrar peso esta semana</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar esta semana: peso</a>', page)
 
     def test_weekly_only_line_en(self):
         conn = _reset_db(self)
@@ -195,7 +195,7 @@ class WeeklyOnlyTest(unittest.TestCase):
         _preparar_streams(conn, 1, HOY, faltan={"peso"})
         conn.commit()
         page = _get().text
-        self.assertIn('href="#asis-btn">weight not logged yet this week</a>', page)
+        self.assertIn('href="#asis-btn">Still to log this week: weight</a>', page)
 
 
 class BothPartsTest(unittest.TestCase):
@@ -208,9 +208,9 @@ class BothPartsTest(unittest.TestCase):
         _preparar_streams(conn, 1, HOY, faltan={"comidas", "proteina", "peso"})
         conn.commit()
         page = _get().text
-        self.assertIn('href="#asis-btn">Falta registrar comidas esta semana</a>', page)
-        self.assertIn('href="#asis-btn">Falta registrar proteína esta semana</a>', page)
-        self.assertIn('href="#asis-btn">Falta registrar peso esta semana</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar hoy: comidas</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar hoy: proteína</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar esta semana: peso</a>', page)
 
     def test_daily_and_weekly_both_present_as_separate_lines_en(self):
         conn = _reset_db(self)
@@ -219,9 +219,9 @@ class BothPartsTest(unittest.TestCase):
         _preparar_streams(conn, 1, HOY, faltan={"comidas", "proteina", "peso"})
         conn.commit()
         page = _get().text
-        self.assertIn('href="#asis-btn">meals not logged yet this week</a>', page)
-        self.assertIn('href="#asis-btn">protein not logged yet this week</a>', page)
-        self.assertIn('href="#asis-btn">weight not logged yet this week</a>', page)
+        self.assertIn('href="#asis-btn">Still to log today: meals</a>', page)
+        self.assertIn('href="#asis-btn">Still to log today: protein</a>', page)
+        self.assertIn('href="#asis-btn">Still to log this week: weight</a>', page)
 
 
 class SinUsoNuncaNombradoTest(unittest.TestCase):
@@ -236,7 +236,7 @@ class SinUsoNuncaNombradoTest(unittest.TestCase):
         out = registro_cobertura.pendientes(conn, 1, HOY)
         self.assertIn("cintura", next(iter(out.values()))["sin_uso"])
         page = _get().text
-        self.assertIn('href="#asis-btn">Falta registrar comidas esta semana</a>', page)
+        self.assertIn('href="#asis-btn">Falta registrar hoy: comidas</a>', page)
         self.assertNotIn("cintura", page)
         self.assertNotIn("waist", page)
 
