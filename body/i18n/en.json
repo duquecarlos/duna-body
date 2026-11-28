@@ -1680,6 +1680,7 @@
   "cuerpo.giro.vista.frente": "Front",
   "cuerpo.giro.vista.lado": "Side",
   "cuerpo.giro.vista.espalda": "Back",
+  "cuerpo.giro.vista.angulo": "{vista}, turned {grados}°",
   "cuerpo.giro.pista": "Drag to turn · arrow keys work too",
   "cuerpo.giro.cargando": "Loading the views…",
   "cuerpo.giro.aria": "Turn your body",

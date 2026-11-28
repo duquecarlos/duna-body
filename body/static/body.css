@@ -18,6 +18,13 @@
   unicode-range:U+0100-02AF,U+0304,U+0308,U+0329,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20CF,U+2113,U+2C60-2C7F,U+A720-A7FF;
 }
 
+/* Global: the browser's own `[hidden]{display:none}` is a low-specificity UA-stylesheet rule --
+   any author `display` declaration beats it regardless of source order. Restated here with
+   `!important` so an element carrying `hidden` is always hidden (BODY-CUERPO-SPIN-HOY-1.F: the
+   image spin's own loading overlay and layer legend never cleared because of this). The per-class
+   `[hidden]{display:none}` rules below become redundant, not wrong -- left as they are. */
+[hidden]{display:none !important}
+
 :root{
   --paper:#F4F2ED; --card:#FCFBF8; --wash:#F8F7F3; --inset:#ECEAE4; --line:#C9C6BF; --soft:#E2DFD8;
   --ink:#121212; --ink2:#4A4844; --muted:#6B6863;

@@ -83,7 +83,7 @@
       </div>
       <div class="giro-leyenda" aria-hidden="true"></div>
       <p class="cuerpo-caption cuerpo3d-detalle" aria-live="polite">{{ t('cuerpo.detalle3d.inicial') }}</p>
-      {% if cuerpo.giro.objetivo %}<p class="cuerpo-caption">{{ t('cuerpo.giro.objetivo') }}</p>{% endif %}
+      {% if cuerpo.giro.objetivo %}<p class="cuerpo-caption giro-objetivo-caption">{{ t('cuerpo.giro.objetivo') }}</p>{% endif %}
     </div>
     {% endif %}
     <div class="cuerpo-vista-btns">
@@ -109,6 +109,11 @@
   <script type="application/json" class="cuerpo3d-vistas">{{ cuerpo.giro.vistas_texto | tojson }}</script>
   <script type="application/json" class="cuerpo3d-rutas-capas">{{ cuerpo.giro.rutas_capas | tojson }}</script>
   <script type="application/json" class="cuerpo3d-rutas-mascaras">{{ cuerpo.giro.rutas_mascaras | tojson }}</script>
+  {# Ruling 3: the raw, unformatted template -- `{vista}`/`{grados}` placeholders intact, since
+     `t(...)` with no kwargs returns the literal string (body/i18n/__init__.py's own T.__call__) --
+     giro.js fills them in at every angle a continuous drag or an arrow-key step can reach, which
+     no fixed per-frame array could cover. #}
+  <script type="application/json" class="cuerpo3d-angulo-texto">{{ t('cuerpo.giro.vista.angulo') | tojson }}</script>
   {# Hoy-only, same reason the viewer this replaces carried its own script here: `cuerpo.giro` is
      never set by Tendencias or Turnos' own `contexto()` calls. #}
   <script src="{{ static_url('giro-interruptor.js') }}" defer></script>

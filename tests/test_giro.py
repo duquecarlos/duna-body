@@ -3,12 +3,16 @@
 layer labels (one literal t() call each) and the per-frame aria-valuetext array. No request, no
 database -- body/rutas/hoy.py is the one caller, tested separately in tests/test_avatar3d.py.
 """
+import pathlib
+import re
 import unittest
 
 from tests._isolate import TMP  # noqa: F401  (must come before any body import)
 
 from body import anatomia, giro
 from body.i18n import T
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 ROOT_STATIC_GIRO = None
 
@@ -168,6 +172,67 @@ class ArteEnElRepoTest(unittest.TestCase):
         base = pathlib.Path(__file__).resolve().parent.parent / "body" / "static" / "giro"
         archivos = sorted(p.name for p in base.iterdir() if p.is_file())
         self.assertEqual(len(archivos), 112)
+
+
+class HiddenGlobalRuleTest(unittest.TestCase):
+    """Ruling 1: body.css carries one global rule so the browser's own `[hidden]{display:none}`
+    -- a low-specificity UA rule any author `display` beats regardless of source order -- always
+    wins. Without it the spin's own loading overlay (`.giro-cargando{display:grid}`) and the
+    muscle legend (`.giro-leyenda{display:flex}`) never clear once `hidden` is set."""
+
+    def test_body_css_carries_the_global_hidden_rule(self):
+        css = (ROOT / "body" / "static" / "body.css").read_text(encoding="utf-8")
+        self.assertIn("[hidden]{display:none !important}", css)
+
+
+class SpinMarkupHiddenTest(unittest.TestCase):
+    """Ruling 1/4: the loading overlay and the muscle-only legend/caption hide through the native
+    `hidden` attribute alone -- never an inline `style="display:..."` that the global rule would
+    then have to fight (or that would silently win over it without `!important`)."""
+
+    def test_no_inline_display_style_on_spin_elements(self):
+        html = (ROOT / "body" / "templates" / "_cuerpo_vista.html").read_text(encoding="utf-8")
+        for clase in ("giro-cargando", "giro-leyenda", "giro-objetivo-caption", "cuerpo3d-detalle",
+                      "cuerpo3d-track"):
+            for m in re.finditer(r'<[a-z]+\b[^>]*\bclass="[^"]*\b' + re.escape(clase) + r'\b[^"]*"[^>]*>', html):
+                self.assertNotIn("style=", m.group(0), f".{clase}'s own tag carries an inline style")
+
+    def test_giro_js_toggles_the_hidden_attribute_not_an_inline_style(self):
+        js = (ROOT / "body" / "static" / "giro.js").read_text(encoding="utf-8")
+        for nombre in ("cargando", "leyenda", "objetivoCaption", "detalle"):
+            self.assertIn(nombre + ".hidden", js, f"giro.js never toggles {nombre}.hidden")
+            self.assertNotIn(nombre + ".style.display", js,
+                              f"giro.js sets an inline display style on {nombre} instead of .hidden")
+
+    def test_legend_and_objetivo_caption_classes_exist_in_the_markup(self):
+        html = (ROOT / "body" / "templates" / "_cuerpo_vista.html").read_text(encoding="utf-8")
+        self.assertIn('class="giro-leyenda"', html)
+        self.assertIn("giro-objetivo-caption", html)
+
+
+class ValueTextAnguloTest(unittest.TestCase):
+    """Ruling 3: a new literal key, `{vista}, girado {grados}°` / `{vista}, turned {grados}°`,
+    both placeholders in both languages -- the raw, unformatted string giro.js fills in at every
+    angle between the four named views (`t(...)` with no kwargs returns it unformatted, body/i18n/
+    __init__.py's own T.__call__)."""
+
+    def test_key_exists_with_both_placeholders_in_both_languages(self):
+        for lang in ("es", "en"):
+            t = _T(lang)
+            valor = t("cuerpo.giro.vista.angulo")
+            self.assertNotEqual(valor, "cuerpo.giro.vista.angulo", f"{lang}: key missing")
+            self.assertIn("{vista}", valor)
+            self.assertIn("{grados}", valor)
+
+    def test_template_passes_the_key_literally(self):
+        html = (ROOT / "body" / "templates" / "_cuerpo_vista.html").read_text(encoding="utf-8")
+        self.assertIn("t('cuerpo.giro.vista.angulo')", html)
+
+    def test_giro_js_reads_and_formats_the_template(self):
+        js = (ROOT / "body" / "static" / "giro.js").read_text(encoding="utf-8")
+        self.assertIn("cuerpo3d-angulo-texto", js)
+        self.assertIn('replace("{vista}"', js)
+        self.assertIn('replace("{grados}"', js)
 
 
 if __name__ == "__main__":
