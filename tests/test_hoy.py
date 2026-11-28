@@ -374,5 +374,23 @@ class ReadingTest(unittest.TestCase):
         self.assertNotIn(ES("part.stress"), out)
 
 
+class VenceTextoCoberturaTest(unittest.TestCase):
+    """BODY-HOY-LO-QUE-VENCE-PULIDO-1 ruling 2: the "coming due" strip's own missing-measure line
+    uses `vence.linea.cobertura` for a weekly stream and the separate `vence.linea.cobertura_hoy`
+    for a daily one -- never the weekly wording ("this week") beside a daily line's own "today"
+    time, and the stream name sits at the END of the sentence in both, after a capital opener, so
+    no sentence starts with a mid-sentence key."""
+
+    def test_weekly_stream_uses_the_weekly_key(self):
+        linea = {"tipo": "cobertura", "datos": {"stream": "peso", "cadencia": "weekly"}}
+        self.assertEqual(hoy._vence_texto(ES, linea), "Falta registrar esta semana: peso")
+        self.assertEqual(hoy._vence_texto(EN, linea), "Still to log this week: weight")
+
+    def test_daily_stream_uses_the_daily_key(self):
+        linea = {"tipo": "cobertura", "datos": {"stream": "proteina", "cadencia": "daily"}}
+        self.assertEqual(hoy._vence_texto(ES, linea), "Falta registrar hoy: proteína")
+        self.assertEqual(hoy._vence_texto(EN, linea), "Still to log today: protein")
+
+
 if __name__ == "__main__":
     unittest.main()

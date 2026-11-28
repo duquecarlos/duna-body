@@ -87,9 +87,9 @@
   <div class="q">{{ vence.titulo }}</div>
   <ul class="plan mt-6">
   {% for l in vence.lineas %}
-    <li class="block{% if l.vencido %} vence-vencido{% endif %}">
+    <li class="vence-linea{% if l.vencido %} vence-vencido{% endif %}">
       <a class="taplink" href="{{ l.href }}">{{ l.texto }}</a>
-      <div class="k mt-6">{{ l.tiempo }}</div>
+      <span class="k">{{ l.tiempo }}</span>
     </li>
   {% endfor %}
   </ul>

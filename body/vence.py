@@ -69,7 +69,9 @@ def _lineas_cobertura(hoy: date, cobertura_pendientes: dict, cadencia: dict) -> 
     streams due by this ISO week's own Sunday (`pronto` until then, `vencido` after). `sueno`'s own
     cadence is 'nightly' (registro_cobertura.MODELO), neither 'daily' nor 'weekly', so it never
     reaches a `dia` here at all -- a missing night is the watch's own sync problem, already Hoy's
-    own sync card, never this strip's to repeat."""
+    own sync card, never this strip's to repeat. `datos` carries `cadencia` alongside `stream`
+    (BODY-HOY-LO-QUE-VENCE-PULIDO-1 ruling 2) -- body/rutas/hoy.py's own `_vence_texto` reads it to
+    pick the daily or weekly wording, never guessing the cadence back from the stream name."""
     datos = next(iter(cobertura_pendientes.values()), None)
     if not datos:
         return []
@@ -83,7 +85,7 @@ def _lineas_cobertura(hoy: date, cobertura_pendientes: dict, cadencia: dict) -> 
             dia = domingo
         else:
             continue
-        linea = _linea("cobertura", dia, hoy, "#asis-btn", {"stream": stream})
+        linea = _linea("cobertura", dia, hoy, "#asis-btn", {"stream": stream, "cadencia": cad})
         if linea:
             out.append(linea)
     return out

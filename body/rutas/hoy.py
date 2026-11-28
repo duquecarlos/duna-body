@@ -644,12 +644,13 @@ def _plan_semana_bloque(t: T, resumen: dict, today_local: date) -> dict:
 
 
 # BODY-HOY-PENDIENTES-REGISTRO-1 (ORCH-CARLOS-DELEGATES-TIER-1-1), reused by BODY-HOY-LO-QUE-
-# VENCE-1 ruling 6 for the strip's own "vence.linea.cobertura" line: the lower-case, mid-sentence
-# stream words -- distinct from metas.py's own capitalised `_REGISTRO_LABEL_KEY` (that one opens a
-# "Falta: ..." line; this one sits inside a sentence). `sueno` carries no key here: body/vence.py's
-# own `_lineas_cobertura` drops it before any label is ever looked up (its cadence is 'nightly',
-# neither 'daily' nor 'weekly' -- a missing night is the watch's own sync problem, already Hoy's
-# own sync card).
+# VENCE-1 ruling 6 (BODY-HOY-LO-QUE-VENCE-PULIDO-1 ruling 2) for the strip's own
+# "vence.linea.cobertura"/"vence.linea.cobertura_hoy" lines: the lower-case stream words that now
+# sit at the END of the sentence, after the colon -- distinct from metas.py's own capitalised
+# `_REGISTRO_LABEL_KEY` (that one opens a "Falta: ..." line of its own). `sueno` carries no key
+# here: body/vence.py's own `_lineas_cobertura` drops it before any label is ever looked up (its
+# cadence is 'nightly', neither 'daily' nor 'weekly' -- a missing night is the watch's own sync
+# problem, already Hoy's own sync card).
 _PENDIENTES_STREAM_KEY = {
     "comidas": "today.plan_semana.pendientes_stream.comidas",
     "proteina": "today.plan_semana.pendientes_stream.proteina",
@@ -690,7 +691,10 @@ def _vence_texto(t: T, linea: dict) -> str:
         n = datos["n"]
         return t("vence.linea.mcp_one") if n == 1 else t("vence.linea.mcp_other", n=t.num(n))
     if tipo == "cobertura":
-        return t("vence.linea.cobertura", stream=t(_PENDIENTES_STREAM_KEY[datos["stream"]]))
+        stream = t(_PENDIENTES_STREAM_KEY[datos["stream"]])
+        if datos["cadencia"] == "daily":
+            return t("vence.linea.cobertura_hoy", stream=stream)
+        return t("vence.linea.cobertura", stream=stream)
     if tipo == "checkpoint":
         return t("vence.linea.checkpoint", titulo=datos["titulo"])
     return t("vence.linea.deadline", titulo=datos["titulo"])
