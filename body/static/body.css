@@ -139,9 +139,16 @@ a.card:active{background:var(--wash)}
 .plan li:first-child{border-top:0}
 /* BODY-HOY-LO-QUE-VENCE-1 ruling 3: the "coming due" strip's own quiet overdue mark -- a thin left
    accent in the same --danger var() the app's other overdue/low marks (.bad, .chip.low) already use,
-   never a second colour. */
-.vence-vencido{position:relative;padding-left:10px}
-.vence-vencido::before{content:"";position:absolute;left:0;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--danger)}
+   never a second colour. BODY-HOY-LO-QUE-VENCE-PULIDO-1 ruling 1: the padding moved from a plain
+   `.vence-vencido` (specificity 0,1,0) to this compound `.plan li.vence-vencido` (0,2,1) -- `.plan
+   li`'s own shorthand `padding:7px 0` above (0,1,1) was winning over a plain class's padding-left
+   regardless of source order, so the mark sat on top of the line's first letters. 7px = the mark's
+   own 3px width + 4px, the app's smallest named spacing step (.mt-4 below), never a bare number.
+   Same reasoning for any other strip line a future mark is added to -- compound on `.plan li`. */
+.plan li.vence-linea{flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 10px}
+.vence-linea .k{white-space:nowrap}
+.plan li.vence-vencido{position:relative;padding-left:7px}
+.plan li.vence-vencido::before{content:"";position:absolute;left:0;top:4px;bottom:4px;width:3px;border-radius:2px;background:var(--danger)}
 .set-excluida{color:var(--muted);text-decoration:line-through}
 .boxbtn{display:inline-flex;align-items:center;justify-content:center;flex:none;width:28px;min-height:44px;background:none;border:0;padding:0;margin:0;cursor:pointer}
 .boxbtn-spacer{display:inline-flex;flex:none;width:28px;min-height:44px}

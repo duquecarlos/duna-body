@@ -215,7 +215,7 @@ class CadaHechoUnaVezTest(unittest.TestCase):
 
         self.assertEqual(page.count("ZZ checkpoint tercero"), 1)
         self.assertEqual(page.count("ZZ meta con plazo"), 1)
-        self.assertEqual(page.count("Falta registrar peso esta semana"), 1)
+        self.assertEqual(page.count("Falta registrar esta semana: peso"), 1)
         self.assertEqual(page.count("Tu asistente tiene una propuesta esperando"), 1)
 
 
@@ -247,6 +247,30 @@ class CuandoTest(unittest.TestCase):
         dia = (HOY - timedelta(days=5)).isoformat()
         self.assertEqual(vence.cuando(ES, dia, HOY), "hace 5 días")
         self.assertEqual(vence.cuando(EN, dia, HOY), "5 days ago")
+
+
+class OverdueMarkupTest(unittest.TestCase):
+    """BODY-HOY-LO-QUE-VENCE-PULIDO-1 ruling 1/4: the overdue line's own <li> renders with the
+    padded `vence-vencido` class (body.css gives it the inner left padding the mark needs), never
+    a bare overdue row with no padding for the mark to sit beside."""
+
+    def setUp(self):
+        self.orig = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", self.orig))
+        self.addCleanup(web.app.dependency_overrides.clear)
+        config.DB_PATH = Path(tempfile.mkdtemp(dir=TMP)) / "overdue_markup.db"
+        self.conn = db.connect()
+        self.addCleanup(self.conn.close)
+        db.init(self.conn)
+        web.app.dependency_overrides[identity.current_person_id] = lambda: 1
+
+    def test_overdue_li_carries_the_vence_vencido_class(self):
+        _metric_goal(self.conn, 1, (HOY - timedelta(days=2)).isoformat(), "ZZ vencida")
+        db.set_metric(self.conn, HOY.isoformat(), "resting_hr", 60.0, "garmin", 1)
+        self.conn.commit()
+        with mock.patch.object(comun, "_today_local", return_value=HOY):
+            page = TestClient(web.app, follow_redirects=False).get("/").text
+        self.assertIn('class="vence-linea vence-vencido"', page)
 
 
 if __name__ == "__main__":

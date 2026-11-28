@@ -470,8 +470,8 @@ class DemoHoyPendientesTest(unittest.TestCase):
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Por vencer", r.text)
-        self.assertIn("Falta registrar proteína esta semana", r.text)
-        self.assertIn('href="#asis-btn">Falta registrar proteína esta semana</a>', r.text)
+        self.assertIn("Falta registrar hoy: proteína", r.text)
+        self.assertIn('href="#asis-btn">Falta registrar hoy: proteína</a>', r.text)
 
 
 class PlanHorizonteSeedTest(unittest.TestCase):
