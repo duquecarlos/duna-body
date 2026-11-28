@@ -36817,3 +36817,137 @@ main..HEAD` printed `0`, so it was switched off and deleted (`git switch main`;
 `git branch -d feat/body-cuerpo-spin-hoy-1`) before this slice's own branch was cut.
 
 **Open followups.** None.
+
+## BODY-CUERPO-SPIN-HOY-1 -- the hidden three.js stand-in replaced with Carlos's own painted spin
+
+Carlos, on the three.js figure BODY-AVATAR-3D-OCULTAR-1 had hidden: *"what the fuck is this 3D
+avatar? It's a chain."* He then painted his own figure across six layers and sixteen 22.5-degree
+views, approved as the mock at `research/avatar-3d-mock/index.html` v10: *"I really like this
+design of the 3D avatar ... This is what I want."* This slice ports that mock faithfully into
+Hoy's body card, replacing the three.js viewer outright, and wires its one tintable layer
+(muscles) to Body's own real per-region training state -- never the mock's invented demo numbers.
+
+**What came out.** `body/static/avatar/` -- `avatar3d.js`, `visor.js`, `figura-v0.json`, and the
+four matcap/fibras webp images under `img/` (7 files) -- removed with `git rm -r`, confirmed gone
+from disk. Two functions in `body/anatomia.py` that existed only to serve that viewer's tap line,
+`etiquetas_regiones` and `etiquetas_estado3d`, removed after a grep confirmed nothing else called
+them. Two dead CSS custom properties, `--cuerpo3d-raya` and `--cuerpo3d-organo` (their only
+consumer was `visor.js`), removed from both the light and dark `:root` blocks in `body/static/
+body.css`. `hoy.py`'s flag is renamed `CUERPO3D_VISIBLE` -> `CUERPO_GIRO_VISIBLE = True` -- still
+one switch that can hide the whole feature if a later problem needs it.
+
+**What came in -- the art.** `body/static/giro/`, 112 files (96 frames: 6 layers x 16 views, each
+`<capa>-<NN>.webp`, plus 16 region-mask PNGs, `giro-regiones-<NN>.png`), copied byte-for-byte with
+`shutil.copy2` from `design/giro/` (BODY-ARTE-FUERA-DEL-REPO-1's own home for art that does not
+belong in a diff) -- 7,178,567 bytes total, verified against `body/giro.py`'s own `CAPAS`/
+`N_VISTAS` by `tests/test_giro.py`'s `ArteEnElRepoTest` (every named file exists, exactly 112, no
+extras).
+
+**`body/giro.py` -- pure data and functions, no request, no database.** `GIRO_REGIONES`: the
+mock's own 19-name region order (index 0 kept `None`, naming no muscle, exactly as the mock's mask
+encoding uses it). Of those 19, `anatomia.REGIONES`' own 10 muscle claves are musculo-v1's tracked
+set; the other 9 (triceps, antebrazos, oblicuos, trapecio, cuello, lumbares, aductores, gemelos,
+tibiales) get `construir_estados()`'s own `"no_medido"` -- never `"sin_datos"`, which would read as
+"Body measured this and found nothing"; `"no_medido"` says Body does not measure it yet.
+`construir_estados(estados_modelo)` takes the SAME dict `body/rutas/hoy.py` already built once from
+`body.musculo.compute()` for the 2D view (never a second call). `COLORES` carries the mock's own
+four state rgb triples plus `None` for `sin_datos`/`no_medido` (both untinted). Three jump views
+(`VISTAS_SALTO`: frente/lado/espalda, the mock's own frame indices 0/4/8) and a computed, not
+hand-typed, 16-entry `vistas_texto()` (each frame names its nearest of the three words by circular
+distance) stand in for the mock's own 16 bespoke English sentences, which this slice's approved
+wording (below) does not carry. Every region/state/layer label is one literal `t("...")` call
+(`etiquetas_regiones`, `etiquetas_estado`, `etiquetas_capas`) -- `tests/test_i18n_paridad.py`'s
+scanner needs each key typed out, never built from a variable at runtime.
+
+**`body/rutas/hoy.py`.** `_giro_ctx()` replaces the old `_cuerpo3d_ctx()`, built from the same
+`estados_modelo` dict the 2D view's own context already computes unconditionally -- adding the spin
+reads zero extra database statements. It carries the six layers' own URLs (`comun.static_url`,
+cache-busted the same way every other static asset is), the 16 mask URLs, the muscle-state map, the
+labels, and `anatomia.objetivo_regiones(categorias_planeadas)` for today's plan outline -- `None`
+on a day with no plan or no recognised target, never an invented one.
+
+**`body/templates/_cuerpo_vista.html`.** The 2D/3D switch is back (`role="radiogroup"`/
+`aria-checked`, never `aria-pressed` -- exactly one of 2D/3D is ever on, and
+`tests/test_experimentos_pantalla.py`'s own `HoyButtonStateTest` counts every literal
+`aria-pressed="true"/"false"` substring on this whole page). Ruling 3: nothing under the 3D side --
+no frame, no mask, no `giro.js` -- loads until the person actually picks 3D; `giro-interruptor.js`
+is the one small always-loaded seam (reads/writes the viewer's own pre-existing `localStorage`
+key, `"body.cuerpo3d"`, same as the old `visor.js` did) that flips `hidden` and injects `giro.js`
+only on that choice. Eight flat JSON blobs (never one nested object, matching this codebase's own
+convention and `tests/test_estados_vacios.py`'s raw-literal leak sweep) hand the engine the
+region states, colours, names, state words, view words, the plan outline, and the two URL lists.
+
+**The layer picker (6 buttons) and the view-jump buttons (3) inside the 3D track also use
+`role="radiogroup"`/`role="radio"`/`aria-checked`, not `aria-pressed`** -- the same reasoning as
+the switch above. The first full gate run caught this: `tests/test_experimentos_pantalla.py`'s
+sweep counted 3 instead of 1 `aria-pressed="true"` once these buttons rendered (present in the DOM,
+only CSS-`hidden`, which that sweep does not account for). Rather than widen this slice's touched
+files to that unrelated test, the buttons were changed to `aria-checked`, and the jump buttons'
+class renamed `giro-vista-btn` (styled identically to `.cuerpo-vista-btn` via a shared selector in
+`body.css`) so they no longer share a class with the 2D view selector's own `aria-pressed` pair.
+`giro.js` was updated to match (`setAttribute("aria-checked", ...)` in both places it used to set
+`aria-pressed`). Re-ran every chunk touching this template and `body.css` after the change; all
+green.
+
+**The scene itself is a native `<button type="button" class="giro-escena" role="slider">`, not a
+`<div tabindex="0">`.** `role="slider"` needs keyboard focus, and a native button is focusable with
+no explicit `tabindex` attribute; `tests/test_accesibilidad.py`'s rule (h) sweeps the whole app for
+one and was vacuous before this slice (its own assertion says so) -- a `div`+`tabindex` would have
+been the first, and that file is outside this slice's touched files too. `all:unset;display:block`
+in `body.css` strips the browser's own button chrome; `type="button"` keeps it out of any form.
+
+**Behaviour ported from the mock** (ruling 4): pointer-drag rotation with crossfade between
+adjacent frames, inertial animation on `ir(destino)`, `ArrowLeft`/`ArrowRight`/`Home` keyboard
+control, tap-to-identify-region, the three jump buttons, the layer buttons, and every interactive
+target at the existing 44px minimum (`.giro-capas button`, `.giro-vista-btn`, `.cuerpo3d-btn` --
+the last one bumped from 38px to 44px in this slice). Today's plan renders as a pulsing outline
+(mask-edge detection against `objetivo`, `prefers-reduced-motion` respected) plus a legend built
+from the actual per-state counts in the rendered muscle data -- never an invented set number.
+
+**i18n** (ruling 7): 28 new keys, `cuerpo.giro.*`, inserted after `cuerpo.aviso3d.figura_
+provisional` in both `body/i18n/es.json` and `body/i18n/en.json` -- six layer labels, three view
+words, `pista`/`cargando`/`aria`/`objetivo`, six state words, and nine new region labels (the other
+ten muscles reuse existing `cuerpo.grupo.*` keys). Verified by direct `json.load`: both files hold
+1763 keys, identical key sets (`set(es) - set(en)` and the reverse both empty), 28 of them under
+the new prefix.
+
+**Statement cost** (ruling 8): measured on `GET /` via `tests/test_rendimiento.py`'s own fixture
+and `contar_sql()` -- **160 statements, 2 connections, before and after this slice** (unchanged;
+`musculo.compute()` was already called unconditionally pre-slice to feed the 2D view's hidden
+region map, and `_giro_ctx` reuses that same result). `tests/test_rendimiento.py` itself needed no
+edit.
+
+**Tests.** `tests/test_giro.py` (new, 20 tests): `GIRO_REGIONES`' shape and order, every tracked
+region reading the model's own word and every untracked one reading `"no_medido"`, the four-tinted/
+two-untinted colour map, every region/state/layer label present in both languages, the 16-entry
+view-text array (each entry one of the three words, the three jump indices naming their own word,
+es != en), frame/mask filename shape, and the full 112-file art-directory check.
+`tests/test_avatar3d.py` (rewritten, 23 tests) restores every old SUBJECT this module covered for
+the three.js viewer, adapted to the spin: the art-copy census, the switch rendering on Hoy only,
+nothing fetched until 3D is chosen, the eight JSON blobs round-tripping, the plan-outline flag,
+both languages' i18n keys existing, `CUERPO_GIRO_VISIBLE` defaulting on, the three.js stand-in and
+its two dead `anatomia` functions confirmed gone, and the CSP left unchanged.
+
+**Customer bytes.** Approved in full by ruling 7 (the exact wording above) and ruling 1 (switch
+restored, spin on the 3D side).
+
+**Gate.** `.venv/Scripts/python.exe -m unittest discover tests -t .`, the whole suite, run in 26
+foreground chunks of ~10 modules each (chunk 5 ran past the 300s foreground window and was
+auto-backgrounded by the harness; its result -- green -- was read from its own output file, not
+re-run): 227, 195, 206(+1 skipped), 320, 224, 153, 241, 234, 160, 220, 186, 340, 304, 210, 291,
+273, 274, 284, 322, 215, 162, 166, 267, 303, 170, 92. **6039 tests, every chunk green** (no
+failures, no errors; the stray log lines seen in several chunks -- "asistente: propuesta ... no se
+pudo mostrar (KeyError)", "pull attempt failed: ...", "connect pull: ...", "refusado: persona 1
+(--desde) tiene 1 fila(s) propias en goal" -- are each a deliberate test fixture's own printed
+output, none touched by this slice, none a figure of a real person), summing exactly to a
+collect-only count of **6039** taken independently on the same final tree via
+`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`.
+
+No password, token, session secret or health figure of a real person was read, printed, or
+written anywhere in this slice's own work.
+
+**Open followups.** `BODY-CUERPO-ESTADO-REGIONES-AMPLIAR-1` -- musculo-v1 tracks 10 of the spin's
+19 named regions; the other 9 render `"no_medido"` until a later slice teaches the model to
+measure them. `BODY-CUERPO-ESTADO-OTRAS-CAPAS-1` -- only the muscle layer is tinted by real state
+today; the skeleton/heart/lungs/nerves/skin layers render plain, as ruling 5 approved, with no
+real-state model yet behind the other five.

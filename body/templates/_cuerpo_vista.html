@@ -1,11 +1,13 @@
 {% macro cuerpo_vista(t, cuerpo, extra_class='', sizes='(min-width: 768px) 700px, calc(100vw - 64px)') %}
 <div class="card cuerpo-card{% if extra_class %} {{ extra_class }}{% endif %}">
   <div class="cuerpo-vista" data-recorte="{{ cuerpo.recorte }}">
-    {% if cuerpo.cuerpo3d %}
-    {# BODY-AVATAR-3D-VISOR-1: exactly one of 2D/3D is ever on, so this is a radio pair
-       (aria-checked), never aria-pressed -- tests/test_experimentos_pantalla.py's own
-       HoyButtonStateTest counts every aria-pressed="true"/"false" on this page by name. #}
-    <div class="seg cuerpo3d-seg" role="radiogroup" aria-label="{{ t('cuerpo.dibujo.aria') }}" hidden>
+    {% if cuerpo.giro %}
+    {# BODY-CUERPO-SPIN-HOY-1 ruling 1: the 2D/3D switch is back, its 3D side now the image spin
+       (never three.js) -- exactly one of 2D/3D is ever on, so this is a radio pair (aria-checked),
+       never aria-pressed -- tests/test_experimentos_pantalla.py's own HoyButtonStateTest counts
+       every aria-pressed="true"/"false" on this page by name. No feature-detection is needed (the
+       spin is images and canvas, not WebGL), so this never carries `hidden`. #}
+    <div class="seg cuerpo3d-seg" role="radiogroup" aria-label="{{ t('cuerpo.dibujo.aria') }}">
       <button type="button" class="cuerpo3d-btn on" data-modo="2d" role="radio" aria-checked="true">{{ t('cuerpo.dibujo.2d') }}</button>
       <button type="button" class="cuerpo3d-btn" data-modo="3d" role="radio" aria-checked="false">{{ t('cuerpo.dibujo.3d') }}</button>
     </div>
@@ -39,18 +41,49 @@
       </div>
       {% endfor %}
     </div>
-    {% if cuerpo.cuerpo3d %}
-    <div class="cuerpo3d-track" hidden>
-      <canvas class="cuerpo3d-lienzo"
-              data-script="{{ static_url('avatar/avatar3d.js') }}"
-              data-figura="{{ static_url('avatar/figura-v0.json') }}"
-              data-matcap-musculo-claro="{{ static_url('avatar/img/matcap-musculo-claro-512.webp') }}"
-              data-matcap-piel-claro="{{ static_url('avatar/img/matcap-piel-claro-512.webp') }}"
-              data-matcap-musculo-oscuro="{{ static_url('avatar/img/matcap-musculo-oscuro-512.webp') }}"
-              data-matcap-piel-oscuro="{{ static_url('avatar/img/matcap-piel-oscuro-512.webp') }}"
-              data-fibras="{{ static_url('avatar/img/fibras-512.webp') }}"
-              aria-label="{{ t('cuerpo.aria3d.lienzo') }}"></canvas>
-      <span class="cuerpo3d-pista">{{ t('cuerpo.dibujo.pista') }}</span>
+    {% if cuerpo.giro %}
+    {# Ruling 3: nothing in here fetches a frame, a mask or the spin engine until the person
+       actually chooses 3D -- `giro-interruptor.js` below is the one small always-loaded seam
+       (it only wires clicks and reads localStorage, same as the old visor.js did for the viewer
+       this replaces), and it is the one that injects `giro.js` and starts loading images. #}
+    <div class="cuerpo3d-track" hidden data-motor="{{ static_url('giro.js') }}">
+      {# role="radiogroup"/aria-checked, not aria-pressed -- one layer is ever on, same reason as
+         the 2D/3D switch above; tests/test_experimentos_pantalla.py's own HoyButtonStateTest counts
+         every aria-pressed="true"/"false" on this whole page by literal substring. #}
+      <div class="giro-capas" role="radiogroup" aria-label="{{ t('cuerpo.giro.aria') }}">
+        {% for id in cuerpo.giro.capas_ids %}
+        <button type="button" class="giro-capa-btn{% if loop.first %} on{% endif %}" data-capa="{{ id }}"
+                role="radio" aria-checked="{{ 'true' if loop.first else 'false' }}">{{ cuerpo.giro.capas_label[id] }}</button>
+        {% endfor %}
+      </div>
+      {# role="slider" needs keyboard focus; a native <button> is focusable with no explicit
+         `tabindex` attribute (tests/test_accesibilidad.py's rule (h) sweeps the whole app for one
+         and is vacuous today -- a div+tabindex would make it the first). `type="button"` keeps it
+         out of any form; `all:unset` in body.css strips the browser's own button chrome. #}
+      <button type="button" class="giro-escena" role="slider" aria-label="{{ t('cuerpo.giro.aria') }}"
+              aria-valuemin="0" aria-valuemax="338" aria-valuenow="0"
+              aria-valuetext="{{ t('cuerpo.giro.vista.frente') }}">
+        <img class="giro-cuadro a" alt="{{ t('cuerpo.giro.aria') }}">
+        <img class="giro-cuadro b" alt="">
+        <canvas class="giro-tinte" aria-hidden="true"></canvas>
+        <canvas class="giro-meta" aria-hidden="true"></canvas>
+        <div class="giro-cargando">{{ t('cuerpo.giro.cargando') }}</div>
+        <span class="giro-pista">{{ t('cuerpo.giro.pista') }}</span>
+      </button>
+      <div class="giro-esfera" aria-hidden="true"></div>
+      <p class="giro-angulo">{{ t('cuerpo.giro.vista.frente') }}</p>
+      {# Same radiogroup/aria-checked reasoning as the layer buttons above -- this reuses
+         .cuerpo-vista-btns for layout but its own `.giro-vista-btn` class (not the 2D view
+         selector's `.cuerpo-vista-btn`, styled identically in body.css), so this does not add to
+         that selector's own aria-pressed count on the page. #}
+      <div class="cuerpo-vista-btns" role="radiogroup" aria-label="{{ t('cuerpo.giro.aria') }}">
+        <button type="button" class="giro-vista-btn on" data-ir="0" role="radio" aria-checked="true">{{ t('cuerpo.giro.vista.frente') }}</button>
+        <button type="button" class="giro-vista-btn" data-ir="4" role="radio" aria-checked="false">{{ t('cuerpo.giro.vista.lado') }}</button>
+        <button type="button" class="giro-vista-btn" data-ir="8" role="radio" aria-checked="false">{{ t('cuerpo.giro.vista.espalda') }}</button>
+      </div>
+      <div class="giro-leyenda" aria-hidden="true"></div>
+      <p class="cuerpo-caption cuerpo3d-detalle" aria-live="polite">{{ t('cuerpo.detalle3d.inicial') }}</p>
+      {% if cuerpo.giro.objetivo %}<p class="cuerpo-caption">{{ t('cuerpo.giro.objetivo') }}</p>{% endif %}
     </div>
     {% endif %}
     <div class="cuerpo-vista-btns">
@@ -63,26 +96,22 @@
   </div>
   <p class="cuerpo-caption">{{ cuerpo.caption }}</p>
   {% if cuerpo.caption_limitada %}<p class="cuerpo-caption">{{ cuerpo.caption_limitada }}</p>{% endif %}
-  {% if cuerpo.cuerpo3d %}
-  <p class="cuerpo-caption cuerpo3d-detalle" aria-live="polite" hidden>{{ t('cuerpo.detalle3d.inicial') }}</p>
-  <p class="cuerpo-caption cuerpo3d-aviso" hidden>{{ t('cuerpo.aviso3d.figura_provisional') }}</p>
-  {# Four flat blobs, never one nested object -- tests/test_estados_vacios.py's own leak sweep
-     flags a bare "{{" "}}" "{}" "[]" literal anywhere in rendered HTML, which a nested JSON
-     object's own closing braces (or a genuinely empty regiones map, on a day with no state at
-     all) would otherwise produce. `regiones` reads `null` on that empty day (ruling 5's own
-     absent-key-means-no-state contract, carried one step further: an empty MAP means no state
-     either, and visor.js reads a null the same way it reads {}). `objetivo`
-     (BODY-CUERPO-ESTADO-MUSCULO-1 ruling 2-3) is the plan's own SEPARATE target layer -- never
-     merged into `regiones` -- and reads `null` the same way on a day with no plan or no
-     recognised target, never a bare "[]". #}
-  <script type="application/json" class="cuerpo3d-regiones">{{ (cuerpo.cuerpo3d.regiones or none) | tojson }}</script>
-  <script type="application/json" class="cuerpo3d-objetivo">{{ (cuerpo.cuerpo3d.objetivo or none) | tojson }}</script>
-  <script type="application/json" class="cuerpo3d-nombres">{{ cuerpo.cuerpo3d.nombres | tojson }}</script>
-  <script type="application/json" class="cuerpo3d-estados-texto">{{ cuerpo.cuerpo3d.estados_texto | tojson }}</script>
-  {# This macro, never the screen template, loads visor.js -- `cuerpo.cuerpo3d` is Hoy-only
-     (body/rutas/hoy.py's own _cuerpo3d_ctx), so Tendencias and Turnos, which call this same
-     macro, never fetch it (ruling 3). #}
-  <script src="{{ static_url('avatar/visor.js') }}" defer></script>
+  {% if cuerpo.giro %}
+  {# Six flat blobs, never one nested object -- tests/test_estados_vacios.py's own leak sweep
+     flags a bare "{{" "}}" "{}" "[]" literal anywhere in rendered HTML. `estados` always carries
+     all 18 named regions (never empty); `objetivo` reads `null` on a day with no plan or no
+     recognised target. #}
+  <script type="application/json" class="cuerpo3d-regiones">{{ cuerpo.giro.estados | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-colores">{{ cuerpo.giro.colores | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-nombres">{{ cuerpo.giro.nombres | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-estados-texto">{{ cuerpo.giro.estados_texto | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-objetivo">{{ (cuerpo.giro.objetivo or none) | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-vistas">{{ cuerpo.giro.vistas_texto | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-rutas-capas">{{ cuerpo.giro.rutas_capas | tojson }}</script>
+  <script type="application/json" class="cuerpo3d-rutas-mascaras">{{ cuerpo.giro.rutas_mascaras | tojson }}</script>
+  {# Hoy-only, same reason the viewer this replaces carried its own script here: `cuerpo.giro` is
+     never set by Tendencias or Turnos' own `contexto()` calls. #}
+  <script src="{{ static_url('giro-interruptor.js') }}" defer></script>
   {% endif %}
 </div>
 {% endmacro %}
