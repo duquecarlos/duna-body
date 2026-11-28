@@ -37180,3 +37180,58 @@ approval text authorised merging on green without a further stop.
 
 No password, token, session secret or health figure of a real person was read, printed, or written
 anywhere in this slice's own work.
+
+## BODY-HOY-LO-QUE-VENCE-PULIDO-1 + .W: overdue-mark overlap, missing-measure wording and line
+spacing, then the ruling-2 wording finished and merged
+
+BODY-HOY-LO-QUE-VENCE-PULIDO-1 (logs/worker-body-hoy-lo-que-vence-pulido-1-body-app-20261128T040803.json)
+built and committed all three strip fixes at `ab8f0eb8d407633bea6f1ab65bf53be00d91217e` on
+`feat/body-hoy-lo-que-vence-pulido-1`, then stopped BLOCKED, correctly, before merging: the whole
+gate (6082 tests, collect-only count matched) had 8 reds, all the same cause, outside its own
+`touches`.
+
+**The three fixes, as committed.** Ruling 1: the overdue mark's `padding-left` moved from the plain
+`.vence-vencido` class (specificity 0,1,0, losing to `.plan li`'s own shorthand `padding:7px 0`)
+to the compound `.plan li.vence-vencido` (0,2,1), `padding-left:7px`. Ruling 2: the missing-measure
+line's stream name moved to the end of the sentence; `vence.linea.cobertura` ("Falta registrar esta
+semana: {stream}" / "Still to log this week: {stream}") is now weekly-only, and a new
+`vence.linea.cobertura_hoy` ("Falta registrar hoy: {stream}" / "Still to log today: {stream}")
+covers daily streams -- `body/vence.py`'s `_lineas_cobertura` carries `cadencia` in `datos`
+alongside `stream`, and `body/rutas/hoy.py`'s `_vence_texto` reads it to choose the key. Ruling 3:
+each line's words and its relative time now sit on one flex row (new `.vence-linea` class, wrap/
+space-between/baseline/4px-10px gap) instead of the old stacked block.
+
+**This continuation's own work.** Ruling 2's wording change was also asserted, in the OLD wording,
+by 7 cases in `tests/test_plan_hoy_registro.py` (`BothPartsTest` x2, `DailyOnlyTest` x2,
+`WeeklyOnlyTest` x2, `SinUsoNuncaNombradoTest` x1) and 1 in `tests/test_demo.py`
+(`DemoHoyPendientesTest.test_hoy_shows_the_pendientes_line_in_spanish`), neither file in either
+slice's `touches`. The wording itself was left exactly as approved -- ruling 2 was not
+reconsidered. Each case's subject was restored on the new wording: a daily stream (`comidas`,
+`proteina`) now asserts `vence.linea.cobertura_hoy`'s rendered text ("Falta registrar hoy: comidas"
+/ "Still to log today: meals", etc.), a weekly stream (`peso`) asserts `vence.linea.cobertura`'s
+("Falta registrar esta semana: peso" / "Still to log this week: weight"); every fact each case
+already asserted (which measure is missing, in which language, daily vs weekly, a never-used
+stream staying unnamed) is unchanged. No production code touched by this continuation -- only the
+two test files' literal expected strings.
+
+**Gate**, `.venv/Scripts/python.exe -m unittest discover tests -t .`, run on the final tree (after
+both slices' changes) in 28 foreground chunks (10 modules each; 5 for the `test_garmin_*` modules,
+split further into two 5-module batches; 5 for the `test_host_*` modules grouped with
+`test_household`/`test_hoy`): every chunk green (no failures, no errors -- the "pull attempt
+failed: ...", "dia vacio ...", "lugares: sin conectar", "mcp ... error: ...", "asistente: propuesta
+... no se pudo mostrar (KeyError)", `ResourceWarning: unclosed database`, and the `Exception in
+thread Thread-92: ... RuntimeError: boom` lines are pre-existing fixture/test-only output, none of
+it touched by either slice, no figure of a real person), summing to exactly **6082** tests across
+all chunks, matching a collect-only count of **6082** taken independently on the same tree via
+`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()` -- the same figure
+BODY-HOY-LO-QUE-VENCE-PULIDO-1's own worker measured before this continuation started.
+
+No schema change and no cross-repo contract touched by either slice. The two i18n strings
+(`vence.linea.cobertura`'s new weekly-only wording and the new `vence.linea.cobertura_hoy` key,
+es/en) are customer-facing bytes already approved verbatim in this continuation's own dispatch
+(`ORCH-CARLOS-DELEGATES-TIER-1-1`, naming both strings), so merge policy A's approval condition was
+already satisfied for them; this continuation's own diff (the two test files) carries no further
+customer-facing byte. Merged on green without a further stop.
+
+No password, token, session secret or health figure of a real person was read, printed, or written
+anywhere in either slice's own work.
