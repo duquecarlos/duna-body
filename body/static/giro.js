@@ -36,6 +36,7 @@
       vistasTexto: leerJson(card, "cuerpo3d-vistas") || [],
       rutasCapas: leerJson(card, "cuerpo3d-rutas-capas") || {},
       rutasMascaras: leerJson(card, "cuerpo3d-rutas-mascaras") || [],
+      anguloTexto: leerJson(card, "cuerpo3d-angulo-texto") || "{vista}",
     };
     var objetivoSet = {};
     datos.objetivo.forEach(function (r) { objetivoSet[r] = true; });
@@ -50,6 +51,7 @@
     var angulo = track.querySelector(".giro-angulo");
     var leyenda = track.querySelector(".giro-leyenda");
     var detalle = card.querySelector(".cuerpo3d-detalle");
+    var objetivoCaption = track.querySelector(".giro-objetivo-caption");
     var botonesCapa = track.querySelectorAll(".giro-capa-btn");
     var botonesVista = track.querySelectorAll("[data-ir]");
     if (!escena || !ca || !cb || !tinte || !meta) return;
@@ -105,6 +107,9 @@
       var tintar = capa === CAPA_TINTADA;
       tinte.style.opacity = tintar ? "0.72" : "0";
       escena.classList.toggle("con-meta", tintar && datos.objetivo.length > 0);
+      if (leyenda) leyenda.hidden = !tintar;
+      if (objetivoCaption) objetivoCaption.hidden = !tintar;
+      if (detalle) detalle.hidden = !tintar;
       if (!tintar) return;
       pedidoPintura = k;
       cargarMascara(k).then(function (L) {
@@ -153,8 +158,11 @@
       [].forEach.call(esfera.children, function (el, k) { el.className = k === cerca ? "on" : ""; });
       var nombre = datos.vistasTexto[cerca] || "";
       if (angulo) angulo.textContent = nombre;
-      escena.setAttribute("aria-valuenow", String(Math.round(cerca * PASO)));
-      escena.setAttribute("aria-valuetext", nombre);
+      var grados = Math.round(cerca * PASO);
+      var texto = (cerca % 4 === 0) ? nombre
+        : datos.anguloTexto.replace("{vista}", nombre).replace("{grados}", String(grados));
+      escena.setAttribute("aria-valuenow", String(grados));
+      escena.setAttribute("aria-valuetext", texto);
       botonesVista.forEach(function (b) {
         var on = +b.dataset.ir === cerca;
         b.setAttribute("aria-checked", String(on));

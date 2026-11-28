@@ -1680,6 +1680,7 @@
   "cuerpo.giro.vista.frente": "Frente",
   "cuerpo.giro.vista.lado": "Lado",
   "cuerpo.giro.vista.espalda": "Espalda",
+  "cuerpo.giro.vista.angulo": "{vista}, girado {grados}°",
   "cuerpo.giro.pista": "Arrastra para girar · también con las flechas",
   "cuerpo.giro.cargando": "Cargando las vistas…",
   "cuerpo.giro.aria": "Gira tu cuerpo",
