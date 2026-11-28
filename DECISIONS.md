@@ -37301,3 +37301,62 @@ from `main` at `7dfe20ba082245278cd2d306b2f83cbc0817beec`). Merged into `main` w
 `57f7aeed1b840568c68d8babc8660c89f9f018c7`; its tree (`31ca8d62b717f18bb1b47d00c182e3b4edbbffcc`) matches
 the slice branch's own tip tree exactly (`git diff` empty), so the gate run above, taken on the final tree
 before the merge, carries over. Branch deleted, repository left on `main`.
+
+## BODY-CUERPO-SPIN-TINTE-OSCURO-1: the spin's tint blend and stage colour, fixed to match the mock in dark theme
+
+Carlos, relayed by the desk 28 Nov: *"when I entered the website this morning, there was some error on the
+green color or the general avatar color showing on the screen, because it doesn't look it well."* The
+orchestrator reproduced it at 375 px in dark theme on invented demo data (`main` `6f29a96`): the 3D spin's
+muscle tint drew as flat pastel blocks over the painting.
+
+**Cause.** `body/static/body.css:581` carried `:root[data-theme="dark"] .giro-tinte{mix-blend-mode:screen}`
+(added by BODY-CUERPO-SPIN-HOY-1), while the approved mock (`research/avatar-3d-mock/index.html`) tints with
+`multiply` in both themes so the tint sits inside the painting's own shading. The frames are painted for a
+light ground; `screen` over them lightens each mask region into a flat block. A second, related mismatch:
+`.cuerpo3d-track` used `var(--wash)` (dark grey in dark theme) for its own background, while the mock keeps
+the painted figure on its own light paper stage in both themes.
+
+**Ruling 1, as built.** Deleted the dark-theme override; `.giro-tinte{mix-blend-mode:multiply;...}` now applies
+unconditionally, with one comment line on it explaining why (the frames are painted on a light ground, so
+`screen` turns a mask region into a flat block). Grepped `body.css` and `giro.js` for any other dark-theme
+branch of the spin's own tint or opacity: none found -- the only such rule was the one removed here (the
+nearby `.cuerpo-vista-glow`'s own light/dark blend switch is a different feature, the 2D view's training glow,
+untouched).
+
+**Ruling 2, as built.** A new theme variable, `--giro-lienzo`, declared in both of `body.css`'s existing theme
+blocks the same way every other theme token already is (`:root{...}` and `:root[data-theme="dark"]{...}` --
+this file carries no `prefers-color-scheme` block to also follow): `#FBF3EA` in the light block, `#ECE4D9` in
+the dark block (the mock's own two paper values). `.cuerpo-vista-track,.cuerpo3d-track`'s shared layout rule
+lost its own `background:var(--wash)`; `.cuerpo-vista-track{background:var(--wash)}` (unchanged, the 2D art
+keeps its own light/dark variants) and `.cuerpo3d-track{background:var(--giro-lienzo)}` are now two rules.
+Text drawn on the stage -- `.giro-pista`'s hint and `.giro-cargando`'s loading label, both inside `.giro-
+escena` -- scopes `--muted` back to the light theme's own value (`--muted:#6B6863`, the exact hex already
+declared in `:root`, no new colour) on `.giro-escena` itself, so it keeps the light theme's contrast against
+the now-always-light stage rather than inheriting dark theme's lighter `--muted` against a background that
+never goes dark. `.giro-cargando`'s own background moved from `var(--wash)` to `var(--giro-lienzo)` for the
+same reason -- its text would otherwise sit on a dark box with light-theme-coloured text, worse contrast than
+before the fix, not better.
+
+**Tests.** `tests/test_giro.py` gains `TinteYLienzoOscuroTest` (5 cases, invented demo data, no body import
+before `tests/_isolate.py`, already first in this module): `.giro-tinte` carries no `mix-blend-mode` other
+than `multiply` in any rule naming it; no `:root[data-theme="dark"] .giro-tinte` selector exists; `--giro-
+lienzo` is declared in both theme blocks with the mock's exact two hex values; `.cuerpo3d-track`'s own
+standalone rule uses `var(--giro-lienzo)`; `.cuerpo-vista-track`'s own standalone rule still uses `var(--wash)`
+and never names `--giro-lienzo`.
+
+**Gate**, exactly `.venv/Scripts/python.exe -m unittest discover tests -t .`, run on the final tree in 28
+foreground chunks (10 modules each; the `test_garmin_*` modules split into a 5-module and a 4-module batch;
+the 4 `test_host_*` modules alone): every chunk green (no failures, no errors -- one pre-existing `expected
+failures=1` and one pre-existing `skipped=1`, neither touched by this slice), summing to exactly **6090**
+tests across all chunks, matching a collect-only count of **6090** taken independently on the same tree via
+`unittest.TestLoader().discover('tests', top_level_dir='.').countTestCases()`.
+
+No schema or migration change (`body/db.py` untouched). No customer-facing byte: no string added, removed or
+reworded, no template changed -- the fix is a CSS blend mode and two colour values, matching the approved
+mock, per the spec's own approval reason ("no string"). No cross-repo contract touched. Merge policy A's
+three conditions all pass; merged on green per the approval reason (`ORCH-CARLOS-DELEGATES-TIER-1-1`, "A CSS
+fix restoring the approved mock's blend and stage on a live view; no string, no schema, no Tier 1 path;
+reversible. You may merge.").
+
+No password, token, session secret or health figure of a real person was read, printed, or written anywhere
+in this slice's own work.

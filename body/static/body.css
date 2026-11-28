@@ -41,6 +41,10 @@
      cap (below) still left it filling the first screen there. One value, named once, never three
      literals repeated at each of its two call sites (`.hoy-figura-compacta`'s track/3d-track rules). */
   --hoy-figura-compacta-max:min(46svh,420px);
+  /* BODY-CUERPO-SPIN-TINTE-OSCURO-1 ruling 2: the spin's own paper stage, same value in both
+     themes (research/avatar-3d-mock's --lienzo) -- the painted frames are shaded for a light
+     ground, so the stage never follows --wash into dark theme's grey. */
+  --giro-lienzo:#FBF3EA;
   color-scheme: light;
 }
 :root[data-theme="dark"]{
@@ -48,6 +52,7 @@
   --ink:#F2F1EC; --ink2:#C9C6BF; --muted:#A09D95; --amber-deep:#E0A33A; --amber-tint:#3A2E17;
   --night-tint:#26313C; --day-tint:#3A2E17; --ok:#7DB282; --body:#7DB282; --danger:#E07A5F; --est:#D9B26A;
   --viaje:#B79CE8;
+  --giro-lienzo:#ECE4D9;
   --focus:#9DB7CF; color-scheme: dark;
 }
 *{box-sizing:border-box}
@@ -521,7 +526,9 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
    `@media (prefers-reduced-motion: reduce){*{transition:none!important}}` rule above, no separate
    rule needed here. ---------- */
 .cuerpo-card{padding:16px}
-.cuerpo-vista-track,.cuerpo3d-track{position:relative;border-radius:12px;overflow:hidden;background:var(--wash);aspect-ratio:1080/1935;touch-action:pan-y}
+.cuerpo-vista-track,.cuerpo3d-track{position:relative;border-radius:12px;overflow:hidden;aspect-ratio:1080/1935;touch-action:pan-y}
+.cuerpo-vista-track{background:var(--wash)}
+.cuerpo3d-track{background:var(--giro-lienzo)}
 .cuerpo-vista[data-recorte="torso"] .cuerpo-vista-track{aspect-ratio:343/260}
 .cuerpo-vista[data-recorte="cabeza"] .cuerpo-vista-track{aspect-ratio:343/240}
 .cuerpo-vista-capa{position:absolute;inset:0;opacity:0;transition:opacity .25s}
@@ -573,12 +580,16 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
 /* The spin's own layered scene (two frames for the crossfade, the tint canvas, the pulsing-plan
    canvas) -- every layer fills `.cuerpo3d-track` the same way, `object-fit:contain` so a shorter
    canvas still lines up with the frame under it. */
-.giro-escena{all:unset;display:block;position:relative;width:100%;height:100%;touch-action:pan-y;cursor:grab}
+/* The spin's stage is always the light paper (--giro-lienzo above), so the hint and loading text
+   drawn on it keep the light theme's own --muted rather than following dark theme's lighter one. */
+.giro-escena{all:unset;display:block;position:relative;width:100%;height:100%;touch-action:pan-y;cursor:grab;--muted:#6B6863}
 .giro-escena.arrastrando{cursor:grabbing}
 .giro-escena img,.giro-escena canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none}
 .giro-escena img.b{opacity:0}
+/* BODY-CUERPO-SPIN-TINTE-OSCURO-1: the frames are painted on a light ground, so `screen` (the
+   dark-theme glow's own blend) turns each mask region into a flat block here -- multiply in both
+   themes, like the mock, so the tint sits inside the painting's own shading. */
 .giro-tinte{mix-blend-mode:multiply;transition:opacity .18s}
-:root[data-theme="dark"] .giro-tinte{mix-blend-mode:screen}
 .giro-meta{opacity:0}
 .giro-escena.con-meta .giro-meta{animation:giro-latido 1.6s ease-in-out infinite}
 @keyframes giro-latido{0%,100%{opacity:.25}50%{opacity:.85}}
@@ -587,7 +598,7 @@ svg.barra{display:block;width:100%;height:6px;margin-top:4px}
   .giro-tinte{transition:none}
 }
 .giro-pista{position:absolute;left:0;right:0;bottom:8px;text-align:center;font-size:12px;color:var(--muted);pointer-events:none}
-.giro-cargando{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:14px;background:var(--wash)}
+.giro-cargando{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);font-size:14px;background:var(--giro-lienzo)}
 
 /* Six layer buttons never fit one row at 375px -- a 3x2 grid, full width, same reason
    `.seg.capas` in the mock is a grid instead of `.cuerpo3d-seg`'s own pill row. */

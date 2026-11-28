@@ -312,5 +312,46 @@ class ValueTextAnguloTest(unittest.TestCase):
         self.assertIn('replace("{grados}"', js)
 
 
+class TinteYLienzoOscuroTest(unittest.TestCase):
+    """BODY-CUERPO-SPIN-TINTE-OSCURO-1 ruling 1/2: the tint multiplies in both themes (no dark-theme
+    `screen` override left in body.css), and the spin's own stage colour (`--giro-lienzo`) is
+    declared with the mock's two paper values and used by `.cuerpo3d-track`, never `.cuerpo-vista-
+    track` (the 2D viewer keeps `var(--wash)`, its art has its own light/dark variants)."""
+
+    def setUp(self):
+        self.css = (ROOT / "body" / "static" / "body.css").read_text(encoding="utf-8")
+
+    def test_giro_tinte_has_no_blend_other_than_multiply(self):
+        reglas = re.findall(r'([^{}]*\.giro-tinte[^{}]*)\{([^}]*)\}', self.css)
+        self.assertTrue(reglas, "no rule targets .giro-tinte")
+        con_blend = [cuerpo for _, cuerpo in reglas if "mix-blend-mode" in cuerpo]
+        self.assertTrue(con_blend, "no rule sets .giro-tinte's mix-blend-mode")
+        for cuerpo in con_blend:
+            self.assertIn("mix-blend-mode:multiply", cuerpo)
+
+    def test_no_theme_scoped_rule_overrides_giro_tinte(self):
+        self.assertNotRegex(self.css, r'data-theme="dark"\]\s*\.giro-tinte')
+
+    def test_stage_variable_declared_with_both_paper_values(self):
+        m_light = re.search(r':root\{[^}]*--giro-lienzo:\s*(#[0-9A-Fa-f]{6})', self.css)
+        m_dark = re.search(r':root\[data-theme="dark"\]\{[^}]*--giro-lienzo:\s*(#[0-9A-Fa-f]{6})', self.css)
+        self.assertIsNotNone(m_light, "--giro-lienzo not declared in the light :root block")
+        self.assertIsNotNone(m_dark, "--giro-lienzo not declared in the dark :root[data-theme=dark] block")
+        self.assertEqual(m_light.group(1).upper(), "#FBF3EA")
+        self.assertEqual(m_dark.group(1).upper(), "#ECE4D9")
+        self.assertNotEqual(m_light.group(1).upper(), m_dark.group(1).upper())
+
+    def test_cuerpo3d_track_uses_the_stage_variable(self):
+        m = re.search(r'(?<![,\w-])\.cuerpo3d-track\{([^}]*)\}', self.css)
+        self.assertIsNotNone(m, "no standalone .cuerpo3d-track rule found")
+        self.assertIn("var(--giro-lienzo)", m.group(1))
+
+    def test_cuerpo_vista_track_still_uses_wash(self):
+        m = re.search(r'(?<![,\w-])\.cuerpo-vista-track\{([^}]*)\}', self.css)
+        self.assertIsNotNone(m, "no standalone .cuerpo-vista-track rule found")
+        self.assertIn("var(--wash)", m.group(1))
+        self.assertNotIn("--giro-lienzo", m.group(1))
+
+
 if __name__ == "__main__":
     unittest.main()
